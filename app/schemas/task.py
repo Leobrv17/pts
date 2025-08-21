@@ -13,7 +13,7 @@ class TaskBase(BaseModel):
     sprintId: str = Field(..., description="Sprint ID")
     projectId: str = Field(..., description="Project ID")
     type: TaskType = Field(default=TaskType.TASK, description="Task type")
-    key: str = Field(..., min_length=1, max_length=100, description="Task key")
+    key: str = Field(..., min_length=1, max_length=10000, description="Task key")
     summary: str = Field(..., min_length=1, description="Task summary")
     storyPoints: float = Field(default=0.0, ge=0, description="Story points")
     wu: str = Field(default="", description="Work units")
@@ -36,7 +36,7 @@ class TaskCreate(BaseModel):
     sprintId: str = Field(..., description="Parent sprint ID")
     projectId: str = Field(..., description="Parent project ID")
     type: TaskType = Field(default=TaskType.TASK, description="Task type: e.g. TASK, EPIC, BUG...")
-    key: str = Field(..., min_length=1, max_length=100, description="Task key")
+    key: str = Field(..., min_length=0, max_length=10000, description="Task key")
     summary: str = Field(..., min_length=1, description="Task summary")
     storyPoints: Optional[float] = Field(default=0.0, ge=0, description="Story points")
     status: TaskStatus = Field(default=TaskStatus.TODO, description="Task status")
@@ -48,7 +48,7 @@ class TaskUpdate(BaseModel):
     id: str = Field(..., description="Task ID")
     sprintId: Optional[str] = None
     projectId: Optional[str] = None
-    key: Optional[str] = Field(None, min_length=1, max_length=100)
+    key: Optional[str] = Field(None, min_length=1, max_length=10000)
     summary: Optional[str] = Field(None, min_length=1)
     storyPoints: Optional[float] = Field(None, ge=0)
     wu: Optional[str] = None
