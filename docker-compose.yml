@@ -1,0 +1,61 @@
+services:
+  mongo:
+    image: mongo:latest
+    container_name: mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    networks:
+      - app-network
+
+  python-app:
+    build: ./app1
+    container_name: pastis_api
+    environment:
+      - MONGO_URI=${MONGO_URI}
+      - DB_NAME=${DB_NAME}
+      - RETRIES=${RETRIES}
+      - SERVER_PORT=${SERVER_PORT}
+      - POPULATE_DB=${POPULATE_DB}
+    depends_on:
+      - mongo
+    ports:
+      - "8003:8003"
+    networks:
+      - app-network
+
+  mongo-express:
+    image: mongo-express
+    container_name: mongo-express
+    restart: always
+    ports:
+      - "8005:8081"
+    environment:
+      ME_CONFIG_MONGODB_URL: mongodb://mongo:27017/
+    depends_on:
+      - mongo
+    networks:
+      - app-network
+
+  api:
+    build: .
+    container_name: project_api
+    ports:
+      - "8001:8000"
+    depends_on:
+      - mongo
+    networks:
+      - app-network
+    environment:
+      - MONGODB_URL=mongodb://mongo:27017
+      - DATABASE_NAME=project_management
+    volumes:
+      - ./app:/app
+
+
+volumes:
+  mongo_data:
+
+networks:
+  app-network:
