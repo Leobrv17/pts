@@ -127,7 +127,8 @@ async def get_sprints(
     status: Optional[str] = Query(None, description="Filter by status"),
     isDeleted: Optional[bool] = Query(False, description="Filter by deleted sprint"),
     sprint_service: SprintService = Depends(get_sprint_service),
-    task_service: TaskService = Depends(get_task_service)
+    task_service: TaskService = Depends(get_task_service),
+    project_service: ProjectService = Depends(get_project_service)
 ) -> SprintListResponse:
     """Get sprints with pagination and filters."""
     skip = (page - 1) * size
@@ -150,6 +151,16 @@ async def get_sprints(
         trans_acts_response = await build_trans_act_response(str(sprint.id), sprint_service)
         relevant_sprint_response = await sprint_service.get_relevant_sprints_by_project(str(sprint.projectId))
 
+        task_statuses = []
+        task_types = []
+        try:
+            project = await project_service.get_project_by_id(str(sprint.projectId), isDeleted)
+            if project:
+                task_statuses = project.task_statuses if project.task_statuses else []
+                task_types = project.task_types if project.task_types else []
+        except Exception:
+            pass
+
         sprint_responses.append(SprintResponse(
             id=str(sprint.id),
             projectId=str(sprint.projectId),
@@ -168,8 +179,8 @@ async def get_sprints(
             oqd=sprint_metrics["oqd"],
             sprintTargets=relevant_sprint_response,
             transversalActivities=trans_acts_response,
-            taskStatuses= sprint.task_statuses,
-            taskTypes= sprint.task_types
+            taskStatuses=task_statuses,
+            taskTypes=task_types
         ))
 
     return SprintListResponse(
