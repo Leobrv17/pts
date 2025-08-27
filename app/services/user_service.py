@@ -93,7 +93,7 @@ class UserService:
         return users
 
     async def update_user(self, user_id: str, user_update: UserUpdate) -> Optional[User]:
-        """Update user."""
+        """Update user with access management."""
         user = await self.get_user_by_id(user_id)
         if not user:
             raise HTTPException(
@@ -101,18 +101,139 @@ class UserService:
                 detail=f"User {user_id} not found"
             )
 
-        update_data = user_update.model_dump(exclude_unset=True)
+        # Mise à jour des champs de base
+        update_data = user_update.model_dump(exclude_unset=True, exclude={
+            'director_accesses', 'project_accesses',
+            'remove_director_accesses', 'remove_project_accesses'
+        })
 
         for field, value in update_data.items():
             setattr(user, field, value)
 
         try:
+            # Gestion des director accesses
+            if user_update.director_accesses is not None:
+                await self._manage_director_accesses(user, user_update.director_accesses)
+
+            if user_update.remove_director_accesses:
+                await self._remove_director_accesses(user, user_update.remove_director_accesses)
+
+            # Gestion des project accesses
+            if user_update.project_accesses is not None:
+                await self._manage_project_accesses(user, user_update.project_accesses)
+
+            if user_update.remove_project_accesses:
+                await self._remove_project_accesses(user, user_update.remove_project_accesses)
+
             return await self.engine.save(user)
         except Exception as e:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Error updating user: {str(e)}"
             )
+
+    async def _manage_director_accesses(self, user: User, director_accesses: List[DirectorAccessCreate]):
+        """Manage director accesses for a user."""
+        for access_data in director_accesses:
+            # Vérifier si l'accès existe déjà
+            existing_access = await self.engine.find_one(
+                DirectorAccess,
+                (DirectorAccess.user_id == user.id) &
+                (DirectorAccess.service_center_id == ObjectId(access_data.service_center_id)) &
+                (DirectorAccess.is_deleted == False)
+            )
+
+            if not existing_access:
+                # Créer un nouveau director access
+                director_access = DirectorAccess(
+                    user_id=user.id,
+                    service_center_id=ObjectId(access_data.service_center_id),
+                    service_center_name=access_data.service_center_name
+                )
+                saved_access = await self.engine.save(director_access)
+
+                # Ajouter à la liste de l'utilisateur
+                if saved_access.id not in user.director_access_list:
+                    user.director_access_list.append(saved_access.id)
+            else:
+                # Mettre à jour l'accès existant si nécessaire
+                existing_access.service_center_name = access_data.service_center_name
+                await self.engine.save(existing_access)
+
+    async def _remove_director_accesses(self, user: User, access_ids: List[str]):
+        """Remove director accesses for a user."""
+        for access_id in access_ids:
+            try:
+                object_id = ObjectId(access_id)
+                # Soft delete de l'accès
+                director_access = await self.engine.find_one(
+                    DirectorAccess,
+                    DirectorAccess.id == object_id
+                )
+                if director_access:
+                    director_access.is_deleted = True
+                    await self.engine.save(director_access)
+
+                    # Retirer de la liste de l'utilisateur
+                    if object_id in user.director_access_list:
+                        user.director_access_list.remove(object_id)
+            except Exception as e:
+                print(f"Error removing director access {access_id}: {e}")
+
+    async def _manage_project_accesses(self, user: User, project_accesses: List[ProjectAccessCreate]):
+        """Manage project accesses for a user."""
+        for access_data in project_accesses:
+            # Vérifier si l'accès existe déjà
+            existing_access = await self.engine.find_one(
+                ProjectAccess,
+                (ProjectAccess.user_id == user.id) &
+                (ProjectAccess.project_id == ObjectId(access_data.project_id)) &
+                (ProjectAccess.is_deleted == False)
+            )
+
+            if not existing_access:
+                # Créer un nouveau project access
+                project_access = ProjectAccess(
+                    user_id=user.id,
+                    service_center_id=ObjectId(access_data.service_center_id),
+                    service_center_name=access_data.service_center_name,
+                    project_id=ObjectId(access_data.project_id),
+                    project_name=access_data.project_name,
+                    access_level=access_data.access_level,
+                    occupancy_rate=access_data.occupancy_rate
+                )
+                saved_access = await self.engine.save(project_access)
+
+                # Ajouter à la liste de l'utilisateur
+                if saved_access.id not in user.project_access_list:
+                    user.project_access_list.append(saved_access.id)
+            else:
+                # Mettre à jour l'accès existant
+                existing_access.service_center_name = access_data.service_center_name
+                existing_access.project_name = access_data.project_name
+                existing_access.access_level = access_data.access_level
+                existing_access.occupancy_rate = access_data.occupancy_rate
+                await self.engine.save(existing_access)
+
+    async def _remove_project_accesses(self, user: User, access_ids: List[str]):
+        """Remove project accesses for a user."""
+        for access_id in access_ids:
+            try:
+                object_id = ObjectId(access_id)
+                # Soft delete de l'accès
+                project_access = await self.engine.find_one(
+                    ProjectAccess,
+                    ProjectAccess.id == object_id
+                )
+                if project_access:
+                    project_access.is_deleted = True
+                    await self.engine.save(project_access)
+
+                    # Retirer de la liste de l'utilisateur
+                    if object_id in user.project_access_list:
+                        user.project_access_list.remove(object_id)
+            except Exception as e:
+                print(f"Error removing project access {access_id}: {e}")
 
     async def delete_user(self, user_id: str) -> bool:
         """Soft delete user."""
@@ -127,8 +248,6 @@ class UserService:
         await self.engine.save(user)
         return True
 
-
-
     async def get_director_access_by_user(self, user_id: str, is_deleted: bool = False) -> List[DirectorAccess]:
         """Get director access by user ID."""
         try:
@@ -141,8 +260,6 @@ class UserService:
             print(f"Error getting director access: {e}")
             return []
 
-
-
     async def get_project_access_by_user(self, user_id: str, is_deleted: bool = False) -> List[ProjectAccess]:
         """Get project access by user ID."""
         try:
@@ -154,4 +271,3 @@ class UserService:
         except Exception as e:
             print(f"Error getting project access: {e}")
             return []
-

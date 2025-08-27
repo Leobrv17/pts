@@ -65,6 +65,31 @@ class UserCreate(UserBase):
     pass
 
 
+class DirectorAccessCreate(DirectorAccessBase):
+    """Schema for creating director access."""
+    user_id: str = Field(..., description="User ID")
+
+
+class DirectorAccessUpdate(BaseModel):
+    """Schema for updating director access."""
+    id: str = Field(..., description="Director access ID")
+    service_center_name: Optional[str] = None
+
+
+class ProjectAccessCreate(ProjectAccessBase):
+    """Schema for creating project access."""
+    user_id: str = Field(..., description="User ID")
+
+
+class ProjectAccessUpdate(BaseModel):
+    """Schema for updating project access."""
+    id: str = Field(..., description="Project access ID")
+    service_center_name: Optional[str] = None
+    project_name: Optional[str] = None
+    access_level: Optional[AccessLevelEnum] = None
+    occupancy_rate: Optional[float] = Field(None, ge=0.0, le=100.0)
+
+
 class UserUpdate(BaseModel):
     """Schema for updating a user."""
     first_name: Optional[str] = Field(None, min_length=1, max_length=100)
@@ -73,6 +98,11 @@ class UserUpdate(BaseModel):
     type: Optional[UserTypeEnum] = None
     registration_number: Optional[str] = Field(None, max_length=50)
     trigram: Optional[str] = Field(None, min_length=3, max_length=3, pattern="^[A-Z]{3}$")
+    # Nouveaux champs pour gérer les accès
+    director_accesses: Optional[List[DirectorAccessCreate]] = Field(None, description="Director accesses to add/update")
+    project_accesses: Optional[List[ProjectAccessCreate]] = Field(None, description="Project accesses to add/update")
+    remove_director_accesses: Optional[List[str]] = Field(None, description="Director access IDs to remove")
+    remove_project_accesses: Optional[List[str]] = Field(None, description="Project access IDs to remove")
 
 
 class UserResponse(UserBase):
@@ -97,31 +127,6 @@ class UserListResponse(BaseModel):
     page: int
     size: int
     pages: int
-
-
-class DirectorAccessCreate(DirectorAccessBase):
-    """Schema for creating director access."""
-    user_id: str = Field(..., description="User ID")
-
-
-class DirectorAccessUpdate(BaseModel):
-    """Schema for updating director access."""
-    id: str = Field(..., description="Director access ID")
-    service_center_name: Optional[str] = None
-
-
-class ProjectAccessCreate(ProjectAccessBase):
-    """Schema for creating project access."""
-    user_id: str = Field(..., description="User ID")
-
-
-class ProjectAccessUpdate(BaseModel):
-    """Schema for updating project access."""
-    id: str = Field(..., description="Project access ID")
-    service_center_name: Optional[str] = None
-    project_name: Optional[str] = None
-    access_level: Optional[AccessLevelEnum] = None
-    occupancy_rate: Optional[float] = Field(None, ge=0.0, le=100.0)
 
 
 class UserByNameRequest(BaseModel):

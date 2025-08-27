@@ -9,26 +9,26 @@ from pymongo import IndexModel, ASCENDING
 
 
 class TaskStatus(str, Enum):
-    OPEN = "Open"
-    TODO = "To do"
-    INVESTIGATION = "Under investigation"
-    INPROGRESS = "In progress"
-    INREVIEW = "In review"
-    WAITING = "Waiting for customer"
-    STANDBY = "Standby"
-    DONE = "Done"
-    CANCELLED = "Cancelled"
-    POSTPONED = "Postponed"
+    OPEN = "OPEN"
+    TODO = "TODO"
+    INVESTIGATION = "INVEST"
+    INPROGRESS = "PROG"
+    INREVIEW = "REV"
+    WAITING = "CUST"
+    STANDBY = "STANDBY"
+    DONE = "DONE"
+    CANCELLED = "CANCEL"
+    POSTPONED = "POST"
 
 
 class TaskType(str, Enum):
-    BUG = "Bug"
-    TASK = "Task"
-    STORY = "Story"
-    EPIC = "Epic"
-    DOC = "Doc"
-    TEST = "Test"
-    DELIVERABLE = "Deliverable"
+    BUG = "BUG"
+    TASK = "TASK"
+    STORY = "STORY"
+    EPIC = "EPIC"
+    DOC = "DOC"
+    TEST = "TEST"
+    DELIVERABLE = "DELIVERABLE"
 
 
 class TASKRFT(str, Enum):
@@ -55,7 +55,8 @@ EXPECTED_HEADERS = {
 }
 
 DB_FIELD_MAPPING = {
-    SourceType.JIRA: {"Issue key": "key", "Issue Type": "type", "Summary": "summary", "Custom field (Story Points)": "storyPoints"},
+    SourceType.JIRA: {"Issue key": "key", "Issue Type": "type", "Summary": "summary",
+                      "Custom field (Story Points)": "storyPoints"},
     SourceType.GITLAB: {"Issue ID": "key", "Title": "summary", "Assignee": "assignee"}
 }
 
@@ -74,8 +75,8 @@ class Task(Model):
         comment (str): Additional comments related to the task.
         deliverySprint (str): The sprint associated with the delivery of the task.
         deliveryVersion (str): The version associated with the delivery of the task.
-        type (TaskType): The type of task, either a bug or a general task.
-        status (TaskStatus): The current status of the task.
+        type (TaskType): The type of task, stores the enum ID (BUG, TASK, etc.).
+        status (TaskStatus): The current status of the task, stores the enum ID (OPEN, TODO, etc.).
         rft (TASKRFT): Readiness for task completion.
         technicalLoad (float): The technical load associated with the task.
         timeSpent (float): The amount of effort consumed so far.
@@ -97,8 +98,8 @@ class Task(Model):
     comment: str = Field(default="")
     deliverySprint: Optional[str] = Field(default="")
     deliveryVersion: Optional[str] = Field(default="")
-    type: TaskType = Field(default=TaskType.TASK)
-    status: TaskStatus = Field(default=TaskStatus.TODO)
+    type: TaskType = Field(default=TaskType.TASK)  # Stores "TASK", "BUG", etc.
+    status: TaskStatus = Field(default=TaskStatus.TODO)  # Stores "TODO", "PROG", etc.
     rft: TASKRFT = Field(default=TASKRFT.DEFAULT)
     technicalLoad: Optional[float] = Field(default=0.0)
     timeSpent: Optional[float] = Field(default=0.0)
@@ -127,12 +128,12 @@ class TaskMandatoryFields(Model):
         summary (str): A brief summary of the task.
         storyPoints (float): The estimated effort required for the task.
         wu (str): Work units associated with the task.
-        status (TaskStatus): The current status of the task.
+        status (TaskStatus): The current status of the task, stores the enum ID.
         progress (str): The progress of the task.
         comment (str): Additional comments related to the task.
         deliverySprint (str): The sprint associated with the delivery of the task.
         deliveryVersion (str): The version associated with the delivery of the task.
-        type (TaskType): The type of task, either a bug or a general task.
+        type (TaskType): The type of task, stores the enum ID.
         rft (TASKRFT): Readiness for task completion.
         assignee (List[ObjectId]): List of users assigned to the task.
         technicalLoad (float): The technical load associated with the task.
@@ -146,12 +147,12 @@ class TaskMandatoryFields(Model):
     summary: str
     storyPoints: float
     wu: str
-    status: TaskStatus
+    status: TaskStatus  # Stores enum ID
     progress: Optional[float]
     comment: Optional[str]
     deliverySprint: Optional[str]
     deliveryVersion: Optional[str]
-    type: TaskType
+    type: TaskType  # Stores enum ID
     rft: TASKRFT
     assignee: Optional[List[ObjectId]]
     technicalLoad: float

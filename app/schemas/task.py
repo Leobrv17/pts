@@ -5,24 +5,22 @@ from typing import Optional, List
 from pydantic import BaseModel, Field
 from bson import ObjectId
 
-from app.models.task import TaskStatus, TaskType, TASKRFT
-
 
 class TaskBase(BaseModel):
     """Base task schema."""
     sprintId: str = Field(..., description="Sprint ID")
     projectId: str = Field(..., description="Project ID")
-    type: TaskType = Field(default=TaskType.TASK, description="Task type")
+    type: str = Field(default="TASK", description="Task type ID (BUG, TASK, STORY, etc.)")
     key: str = Field(..., min_length=1, max_length=10000, description="Task key")
-    summary: str = Field(..., min_length=1, description="Task summary")
+    summary: str = Field(..., min_length=0, description="Task summary")
     storyPoints: float = Field(default=0.0, ge=0, description="Story points")
     wu: str = Field(default="", description="Work units")
-    status: TaskStatus = Field(default=TaskStatus.TODO, description="Task status")
+    status: str = Field(default="TODO", description="Task status ID (OPEN, TODO, PROG, etc.)")
     progress: Optional[float] = Field(default=None, ge=0, le=100, description="Progress percentage")
     comment: str = Field(default="", description="Comments")
     deliverySprint: Optional[str] = Field(default="", description="Delivery sprint")
     deliveryVersion: Optional[str] = Field(default="", description="Delivery version")
-    rft: TASKRFT = Field(default=TASKRFT.DEFAULT, description="Ready for test")
+    rft: str = Field(default="", description="Ready for test (OK, KO, or empty)")
     assignee: Optional[List[str]] = Field(default_factory=list, description="Assignee user IDs")
     technicalLoad: Optional[float] = Field(default=0.0, ge=0, description="Technical load")
     timeSpent: Optional[float] = Field(default=0.0, ge=0, description="Time spent")
@@ -35,11 +33,11 @@ class TaskCreate(BaseModel):
     id: Optional[str] = Field(None, description="Task ID")
     sprintId: str = Field(..., description="Parent sprint ID")
     projectId: str = Field(..., description="Parent project ID")
-    type: TaskType = Field(default=TaskType.TASK, description="Task type: e.g. TASK, EPIC, BUG...")
+    type: str = Field(default="TASK", description="Task type ID: TASK, EPIC, BUG, STORY, DOC, TEST, DELIVERABLE")
     key: str = Field(..., min_length=0, max_length=10000, description="Task key")
     summary: str = Field(..., min_length=1, description="Task summary")
     storyPoints: Optional[float] = Field(default=0.0, ge=0, description="Story points")
-    status: TaskStatus = Field(default=TaskStatus.TODO, description="Task status")
+    status: str = Field(default="TODO", description="Task status ID: OPEN, TODO, INVEST, PROG, REV, CUST, STANDBY, DONE, CANCEL, POST")
     assignee: Optional[List[str]] = Field(default_factory=list, description="Task assignees. List of User IDs")
 
 
@@ -55,9 +53,9 @@ class TaskUpdate(BaseModel):
     comment: Optional[str] = None
     deliverySprint: Optional[str] = None
     deliveryVersion: Optional[str] = None
-    type: Optional[TaskType] = None
-    status: Optional[TaskStatus] = None
-    rft: Optional[TASKRFT] = None
+    type: Optional[str] = Field(None, description="Task type ID")
+    status: Optional[str] = Field(None, description="Task status ID")
+    rft: Optional[str] = Field(None, description="Ready for test")
     technicalLoad: Optional[float] = Field(None, ge=0)
     timeSpent: Optional[float] = Field(None, ge=0)
     timeRemaining: Optional[float] = Field(None, ge=0)
@@ -101,13 +99,13 @@ class HttpResponseDeleteStatus(BaseModel):
 
 
 class TaskSpecifics(BaseModel):
-    """Schema for any task type."""
-    key: str
-    specific: str
+    """Schema for any task type or status."""
+    key: str = Field(..., description="The enum ID (e.g., 'BUG', 'OPEN')")
+    specific: str = Field(..., description="The human-readable label (e.g., 'Bug', 'Open')")
 
 
 class TaskSpecificsResponse(BaseModel):
-    """Schema for task type response."""
+    """Schema for task type/status response."""
     specifics: List[TaskSpecifics]
 
 

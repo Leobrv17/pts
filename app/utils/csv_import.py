@@ -1,5 +1,4 @@
-import csv
-from io import BytesIO
+from io import StringIO
 from typing import List, Tuple
 
 import pandas as pd
@@ -8,15 +7,17 @@ from bson.errors import InvalidId
 from fastapi import HTTPException, UploadFile
 from odmantic import AIOEngine
 
-from app.models.task import TaskStatus, TaskType, Task, ImportCSVResponse
+from app.models.task import TaskStatus, TaskType, Task, ImportCSVResponse, SourceType, EXPECTED_HEADERS
 from app.core.exceptions import raise_invalid_id_exception
 
+CANDIDATE_SEPS = [",", ";", "\t"]
 
-def find_csv_separator(content: bytes) -> str:
+
+def detect_type_and_sep(first_line: str) -> (SourceType, str):
     """Detect the CSV separator by analyzing the first non-empty line.
 
     Args:
-        content (bytes): The raw bytes of the CSV file.
+        first_line (str): The first line of the document
 
     Returns:
         str: The detected separator (e.g., ',', ';', '\t') or ',' as default.
@@ -25,35 +26,32 @@ def find_csv_separator(content: bytes) -> str:
         HTTPException: If no separator can be determined.
     """
     try:
-        # Decode bytes to string and split into lines
-        text = content.decode('utf-8', errors='ignore')
-        lines = text.splitlines()
-
-        for line in lines:
-            if line.strip():
-                # Check for common separators
-                if ',' in line:
-                    return ','
-                elif ';' in line:
-                    return ';'
-                elif '\t' in line:
-                    return '\t'
-                else:
-                    #logger.warning("No clear separator found; defaulting to comma")
-                    return ','
-        raise HTTPException(status_code=400, detail="CSV file is empty or has no valid content")
+        for sep in CANDIDATE_SEPS:
+            cols = [c.strip() for c in first_line.split(sep)]
+            if set(EXPECTED_HEADERS[SourceType.JIRA]).issubset(cols):
+                return SourceType.JIRA, sep
+            if set(EXPECTED_HEADERS[SourceType.GITLAB]).issubset(cols):
+                return SourceType.GITLAB, sep
+        raise ValueError("Couldn't find expected headers in file")
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Error detecting CSV separator: {str(e)}")
 
 
-def cleaned_csv(content: bytes) -> bytes:
-    """Clean the CSV content by removing surrounding quotes and trailing commas.
+def analyse_csv(content: bytes) -> (pd.DataFrame, SourceType):
+    lines = bytes_to_str(content)
+    source_type, separator = detect_type_and_sep(lines[0])
+    return parse_csv(lines, separator), source_type
+
+
+def bytes_to_str(content: bytes) -> list[str]:
+    """Clean the CSV content by removing surrounding quotes and trailing commas, and split
+       the content into lists of str
 
     Args:
         content (bytes): The raw bytes of the CSV file.
 
     Returns:
-        bytes: The cleaned CSV content as bytes, suitable for parsing.
+        list[str]: The cleaned CSV content
 
     Raises:
         HTTPException: If the input is empty or contains no valid lines.
@@ -64,27 +62,14 @@ def cleaned_csv(content: bytes) -> bytes:
             raise ValueError("Empty CSV content")
 
         lines = text.splitlines()
-
-        line_ending = '\r\n' if any('\r\n' in line for line in lines) else '\n'
-
-        cleaned_lines = []
-        for line in lines:
-            if not line.strip():
-                continue
-            reader = csv.reader([line], quotechar='"', skipinitialspace=True)
-            fields = next(reader)
-            fields = [field.strip('"') for field in fields if field]
-            cleaned_line = ','.join(fields)
-            cleaned_lines.append(cleaned_line)
-
-        if not cleaned_lines:
-            raise ValueError("No valid CSV lines found") # pragma: no cover
-
-        clean_csv_str = line_ending.join(cleaned_lines).encode('utf-8')
-        return clean_csv_str
     except Exception as e:
-        #logger.error(f"Error cleaning CSV: {str(e)}")
+        # logger.error(f"Error cleaning CSV: {str(e)}")
         raise HTTPException(status_code=400, detail=f"Error cleaning CSV: {str(e)}")
+
+    else:
+        lines = [l.replace("\r\n", "\n").replace("\r", "\n").replace("\"", "") for l in lines]
+        lines = [l.lstrip("\ufeff") for l in lines]
+        return lines
 
 
 def validate_file_and_ids(file: UploadFile, sprint_id: str, project_id: str) -> Tuple[ObjectId, ObjectId] or None:
@@ -109,11 +94,11 @@ def validate_file_and_ids(file: UploadFile, sprint_id: str, project_id: str) -> 
         raise_invalid_id_exception("Sprint or Project", f"{sprint_id} or {project_id}")
 
 
-def parse_csv(content: bytes, separator: str) -> pd.DataFrame:
+def parse_csv(lines: list[str], separator: str) -> pd.DataFrame:
     """Parse CSV content into a pandas DataFrame.
 
     Args:
-        content (bytes): The raw bytes of the CSV file.
+        lines (list[str]): The content of the csv file split in lines
         separator (str): The separator used in the CSV (e.g., ',' or ';').
 
     Returns:
@@ -122,14 +107,15 @@ def parse_csv(content: bytes, separator: str) -> pd.DataFrame:
     Raises:
         HTTPException: If parsing fails or the CSV is empty.
     """
+    lines = "\n".join(lines)
     try:
-        df = pd.read_csv(BytesIO(content), delimiter=separator, quotechar='"', escapechar='\\')
+        df = pd.read_csv(StringIO(lines), delimiter=separator)
         if df.empty:
-            raise HTTPException(status_code=400, detail="CSV file is empty") # pragma: no cover
+            raise HTTPException(status_code=400, detail="CSV file is empty")  # pragma: no cover
         df = df.replace('""', '')
         return df
     except Exception as e:
-        #logger.error(f"Error parsing CSV: {str(e)}")
+        # logger.error(f"Error parsing CSV: {str(e)}")
         raise HTTPException(status_code=400, detail=f"Error parsing CSV: {str(e)}")
 
 
@@ -157,8 +143,8 @@ def validate_headers(df: pd.DataFrame, expected_headers: List[str]) -> pd.DataFr
         )
     try:
         return df[expected_headers]
-    except KeyError as e: # pragma: no cover
-        raise HTTPException(status_code=400, detail=f"Column '{str(e)}' missing from CSV") # pragma: no cover
+    except KeyError as e:  # pragma: no cover
+        raise HTTPException(status_code=400, detail=f"Column '{str(e)}' missing from CSV")  # pragma: no cover
 
 
 def map_csv_to_tasks(df: pd.DataFrame, db_mapping: dict, sprint_id: ObjectId, project_id: ObjectId) -> pd.DataFrame:
@@ -177,21 +163,40 @@ def map_csv_to_tasks(df: pd.DataFrame, db_mapping: dict, sprint_id: ObjectId, pr
         HTTPException: If mapping fails due to data issues.
     """
     try:
-        mapped_df = df.rename(columns={h: db_mapping[h] for h in df.columns})
+        mapped_df = df.rename(columns={h: db_mapping[h] for h in df.columns if h in db_mapping})
         mapped_df['key'] = mapped_df['key'].astype(str)
 
         status_mapping = {
-            'open': TaskStatus.OPEN,
-            'to do': TaskStatus.TODO,
-            'in progress': TaskStatus.INPROGRESS,
-            'done': TaskStatus.DONE,
-            'ready for validation': TaskStatus.INREVIEW,
+            'open': 'OPEN',
+            'to do': 'TODO',
+            'todo': 'TODO',
+            'in progress': 'PROG',
+            'done': 'DONE',
+            'ready for validation': 'REV',
+            'under investigation': 'INVEST',
+            'waiting for customer': 'CUST',
+            'standby': 'STANDBY',
+            'cancelled': 'CANCEL',
+            'postponed': 'POST'
+        }
+
+        # Type mapping using enum IDs (uppercase versions)
+        type_mapping = {
+            'bug': 'BUG',
+            'task': 'TASK',
+            'story': 'STORY',
+            'epic': 'EPIC',
+            'doc': 'DOC',
+            'test': 'TEST',
+            'deliverable': 'DELIVERABLE'
         }
 
         if 'type' in mapped_df.columns:
-            mapped_df['type'] = mapped_df['type'].fillna(TaskType.TASK)
+            mapped_df['type'] = mapped_df['type'].apply(
+                lambda x: type_mapping.get(str(x).lower(), 'TASK') if pd.notna(x) else 'TASK'
+            )
         else:
-            mapped_df['type'] = TaskType.TASK
+            mapped_df['type'] = 'TASK'
 
         if 'storyPoints' in mapped_df.columns:
             mapped_df['storyPoints'] = pd.to_numeric(mapped_df['storyPoints'], errors='coerce').fillna(0)
@@ -207,18 +212,18 @@ def map_csv_to_tasks(df: pd.DataFrame, db_mapping: dict, sprint_id: ObjectId, pr
         # Handle status column: if missing, fill with To do; otherwise, map values
         if 'status' in mapped_df.columns:
             mapped_df['status'] = mapped_df['status'].apply(
-                lambda x: status_mapping.get(str(x).lower(), TaskStatus.TODO) if pd.notna(x) else TaskStatus.TODO
+                lambda x: status_mapping.get(str(x).lower(), 'TODO') if pd.notna(x) else 'TODO'
             )
         else:
-            mapped_df['status'] = TaskStatus.TODO
+            mapped_df['status'] = 'TODO'
 
         mapped_df['sprintId'] = sprint_id
         mapped_df['projectId'] = project_id
 
         return mapped_df[~mapped_df['key'].isna() & ~mapped_df['summary'].isna()]
-    except Exception as e: # pragma: no cover
-        #logger.error(f"Error mapping data: {str(e)}") # pragma: no cover
-        raise HTTPException(status_code=400, detail=f"Error mapping CSV data: {str(e)}") # pragma: no cover
+    except Exception as e:  # pragma: no cover
+        # logger.error(f"Error mapping data: {str(e)}") # pragma: no cover
+        raise HTTPException(status_code=400, detail=f"Error mapping CSV data: {str(e)}")  # pragma: no cover
 
 
 async def process_tasks_and_duplicates(mapped_df: pd.DataFrame, sprint: "Sprint", engine: "AIOEngine") -> Tuple[
@@ -251,9 +256,22 @@ async def process_tasks_and_duplicates(mapped_df: pd.DataFrame, sprint: "Sprint"
 
     new_tasks_df = mapped_df[~mapped_df['key'].isin(existing_keys)]
     try:
-        tasks = [Task(**row.to_dict()) for _, row in new_tasks_df.iterrows()]
+        # Convert enum string IDs to actual enum values before creating Task objects
+        tasks = []
+        for _, row in new_tasks_df.iterrows():
+            task_dict = row.to_dict()
+
+            # Convert status string to enum
+            if 'status' in task_dict:
+                task_dict['status'] = TaskStatus(task_dict['status'])
+
+            # Convert type string to enum
+            if 'type' in task_dict:
+                task_dict['type'] = TaskType(task_dict['type'])
+
+            tasks.append(Task(**task_dict))
     except Exception as e:
-        #logger.error(f"Error creating task objects: {str(e)}")
+        # logger.error(f"Error creating task objects: {str(e)}")
         raise HTTPException(status_code=400, detail=f"Error creating tasks from CSV: {str(e)}")
 
     if tasks:
@@ -289,7 +307,7 @@ def build_response(tasks: List[Task], duplicate_keys: List[str],
     if duplicate_count > 0:
         message += f". {duplicate_count} tasks were not added because they already exist in the sprint"
 
-    #logger.info((f"Imported {len(tasks) - duplicate_count} tasks", f"in sprint {str(tasks[0].sprintId)}." if len(tasks) > 0 else "."))
+    # logger.info((f"Imported {len(tasks) - duplicate_count} tasks", f"in sprint {str(tasks[0].sprintId)}." if len(tasks) > 0 else "."))
 
     return ImportCSVResponse(
         status=True,

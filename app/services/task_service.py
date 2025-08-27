@@ -5,7 +5,7 @@ from bson import ObjectId
 from odmantic import AIOEngine
 from fastapi import HTTPException, status
 
-from app.models.task import Task, TASKRFT
+from app.models.task import Task, TASKRFT, TaskStatus, TaskType
 from app.schemas.task import TaskCreate, TaskUpdate
 
 
@@ -37,12 +37,49 @@ class TaskService:
     def __init__(self, engine: AIOEngine):
         self.engine = engine
 
+    def _validate_and_convert_status(self, status_id: str) -> TaskStatus:
+        """Validate and convert status ID to TaskStatus enum."""
+        try:
+            return TaskStatus(status_id)
+        except ValueError:
+            valid_statuses = [status.value for status in TaskStatus]
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid task status '{status_id}'. Valid statuses: {valid_statuses}"
+            )
+
+    def _validate_and_convert_type(self, type_id: str) -> TaskType:
+        """Validate and convert type ID to TaskType enum."""
+        try:
+            return TaskType(type_id)
+        except ValueError:
+            valid_types = [task_type.value for task_type in TaskType]
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid task type '{type_id}'. Valid types: {valid_types}"
+            )
+
+    def _validate_and_convert_rft(self, rft_id: str) -> TASKRFT:
+        """Validate and convert RFT ID to TASKRFT enum."""
+        try:
+            return TASKRFT(rft_id)
+        except ValueError:
+            valid_rfts = [rft.value for rft in TASKRFT]
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid RFT value '{rft_id}'. Valid values: {valid_rfts}"
+            )
+
     async def create_task(self, task_data: TaskCreate) -> Task:
         """Create a new task."""
         # Convert string IDs to ObjectIds
         sprint_oid = ObjectId(task_data.sprintId)
         project_oid = ObjectId(task_data.projectId)
         assignees = [ObjectId(aid) for aid in task_data.assignee] if task_data.assignee else []
+
+        # Validate and convert enums
+        task_status = self._validate_and_convert_status(task_data.status)
+        task_type = self._validate_and_convert_type(task_data.type)
 
         task = Task(
             sprintId=sprint_oid,
@@ -54,8 +91,8 @@ class TaskService:
             comment="",
             deliverySprint="",
             deliveryVersion="",
-            type=task_data.type,
-            status=task_data.status,
+            type=task_type,  # Store enum value (e.g., "TASK", "BUG")
+            status=task_status,  # Store enum value (e.g., "TODO", "PROG")
             rft=TASKRFT.DEFAULT,
             technicalLoad=0,
             timeSpent=0,
@@ -109,6 +146,14 @@ class TaskService:
         if 'assignee' in update_data and update_data['assignee'] is not None:
             update_data['assignee'] = [ObjectId(aid) for aid in update_data['assignee']]
 
+        # Validate and convert enums
+        if 'status' in update_data and update_data['status'] is not None:
+            update_data['status'] = self._validate_and_convert_status(update_data['status'])
+        if 'type' in update_data and update_data['type'] is not None:
+            update_data['type'] = self._validate_and_convert_type(update_data['type'])
+        if 'rft' in update_data and update_data['rft'] is not None:
+            update_data['rft'] = self._validate_and_convert_rft(update_data['rft'])
+
         for field, value in update_data.items():
             if field != 'id':
                 setattr(task, self._field_mapping[field], value)
@@ -145,7 +190,7 @@ class TaskService:
             return []
 
     async def get_task_type_list(self) -> dict:
-        """Get all existing task types."""
+        """Get all existing task types with their IDs."""
         return {
             "BUG": "Bug",
             "TASK": "Task",
@@ -157,7 +202,7 @@ class TaskService:
         }
 
     async def get_task_status_list(self) -> dict:
-        """Get all existing task statuses."""
+        """Get all existing task statuses with their IDs."""
         return {
             "OPEN": "Open",
             "TODO": "To do",

@@ -11,8 +11,8 @@ from app.schemas.general_schemas import HttpResponseDeleteStatus
 from app.services.task_service import TaskService
 from app.models.task import ImportCSVResponse, SourceType, EXPECTED_HEADERS, DB_FIELD_MAPPING
 from app.services.sprint_service import SprintService
-from app.utils.csv_import import validate_file_and_ids, find_csv_separator, cleaned_csv, parse_csv, validate_headers, \
-    map_csv_to_tasks, build_response, process_tasks_and_duplicates
+from app.utils.csv_import import validate_file_and_ids, parse_csv, validate_headers, \
+    map_csv_to_tasks, build_response, process_tasks_and_duplicates, analyse_csv
 
 router = APIRouter()
 
@@ -192,12 +192,11 @@ async def get_task_statuses(
 
 @router.post("/import-csv", response_model=ImportCSVResponse, response_model_by_alias=False)
 async def import_csv(
-        projectId: str,
-        sprintId: str,
-        file: UploadFile,
-        source: SourceType = Form(...),
-        task_service: TaskService = Depends(get_task_service),
-        sprint_service: SprintService = Depends(get_sprint_service)
+    projectId: str,
+    sprintId: str,
+    file: UploadFile,
+    task_service: TaskService = Depends(get_task_service),
+    sprint_service: SprintService = Depends(get_sprint_service)
 ) -> ImportCSVResponse:
     """Import tasks from a CSV file into a sprint within a project.
 
@@ -221,11 +220,9 @@ async def import_csv(
     sprintId, projectId = validate_file_and_ids(file, sprintId, projectId)
     sprint = await sprint_service.get_sprint_by_id(sprintId)
     content = await file.read()
-    separator = find_csv_separator(content)
-    cleaned_lines = cleaned_csv(content)
-    df = parse_csv(cleaned_lines, separator)
-    df = validate_headers(df, EXPECTED_HEADERS[source])
-    mapped_df = map_csv_to_tasks(df, DB_FIELD_MAPPING[source], sprintId, projectId)
-    tasks, total_count, duplicate_keys, invalid_rows = await process_tasks_and_duplicates(mapped_df, sprint, task_service.engine)
+    df, source_type = analyse_csv(content)
+    mapped_df = map_csv_to_tasks(df, DB_FIELD_MAPPING[source_type], sprintId, projectId)
+    tasks, total_count, duplicate_keys, invalid_rows = await process_tasks_and_duplicates(mapped_df, sprint,
+                                                                                          task_service.engine)
     return build_response(tasks, duplicate_keys, invalid_rows)
 
