@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from enum import Enum
-from typing import List, Dict
+from typing import List, Dict, Optional
 
 from bson import ObjectId
 from odmantic import Model, Field
@@ -33,7 +33,7 @@ class ServiceCenter(Model):
     """
     centerName: str
     location: str = ""
-    contactEmail: EmailStr = "a@b.c"
+    contactEmail: Optional[str] = None
     contactPhone: str = ""
     status: ServiceCenterStatus = ServiceCenterStatus.OPERATIONAL
     projects: List[ObjectId] = Field(default_factory=list)

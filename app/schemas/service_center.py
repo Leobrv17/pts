@@ -2,7 +2,7 @@
 
 from datetime import datetime
 from typing import Optional, List
-from pydantic import BaseModel, Field, EmailStr
+from pydantic import BaseModel, Field, EmailStr,field_validator
 from bson import ObjectId
 
 from app.models.service_center import ServiceCenterStatus
@@ -14,9 +14,18 @@ class ServiceCenterBase(BaseModel):
     """Base service center schema."""
     centerName: str = Field(..., min_length=1, max_length=200, description="Service center name")
     location: Optional[str] = Field(default="", description="Service center location")
-    contactEmail: Optional[EmailStr] = Field(default="default@email.com", description="Contact email")
+    contactEmail: Optional[EmailStr] = Field(None, description="contact email of service center")
     contactPhone: Optional[str] = Field(default="", description="Contact phone")
     status: Optional[ServiceCenterStatus] = Field(default=ServiceCenterStatus.OPERATIONAL, description="Service center status")
+
+    @field_validator("contactEmail", mode="before")
+    @classmethod
+    def empty_str_to_none(cls, v):
+        if v is None:
+            return None
+        if isinstance(v, str) and v.strip() == "":
+            return None
+        return v
 
 
 class ServiceCenterUpdate(BaseModel):
