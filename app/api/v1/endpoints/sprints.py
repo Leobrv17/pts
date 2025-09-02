@@ -1,9 +1,9 @@
-"""Sprint API endpoints."""
+"""Sprint API endpoints with cascade deletion."""
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from math import ceil
 
-from app.api.deps import get_sprint_service, get_task_service, get_project_service
+from app.api.deps import get_sprint_service, get_task_service, get_project_service, get_cascade_deletion_service
 from app.schemas.sprint import (
     SprintCreate, SprintUpdate, SprintResponse, SprintListResponse,
     SprintTransversalActivityUpdate, SprintTransversalActivityResponse,
@@ -11,6 +11,7 @@ from app.schemas.sprint import (
 )
 from app.services.sprint_service import SprintService
 from app.services.task_service import TaskService
+from app.services.cascade_deletion_service import CascadeDeletionService
 from app.utils.calculations import calculate_sprint_metrics
 from app.schemas.task import TaskResponse
 from app.services.project_service import ProjectService
@@ -299,10 +300,10 @@ async def update_sprint(
 @router.delete("/{sprintId}", response_model=HttpResponseDeleteStatus, response_model_by_alias=False)
 async def delete_sprint(
     sprintId: str,
-    sprint_service: SprintService = Depends(get_sprint_service)
+    cascade_deletion_service: CascadeDeletionService = Depends(get_cascade_deletion_service)
 ):
-    """Delete sprint (soft delete)."""
-    success = await sprint_service.delete_sprint(sprintId)
+    """Delete sprint with cascade deletion (soft delete)."""
+    success = await cascade_deletion_service.delete_sprint_with_cascade(sprintId, is_cascade=False)
     if not success:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -311,5 +312,14 @@ async def delete_sprint(
 
     return HttpResponseDeleteStatus(
         status=success,
-        msg=f"Sprint {sprintId} deleted successfully." if success else f"Error during deletion of sprint {sprintId}."
+        msg=f"Sprint {sprintId} and all related tasks deleted successfully (cascade)" if success else f"Error during cascade deletion of sprint {sprintId}."
     )
+
+
+@router.get("/{sprintId}/cascade-deleted", response_model=dict, response_model_by_alias=False)
+async def get_cascade_deleted_elements(
+        sprintId: str,
+        cascade_deletion_service: CascadeDeletionService = Depends(get_cascade_deletion_service)
+):
+    """Get all elements that were cascade deleted from this sprint."""
+    return await cascade_deletion_service.get_cascade_deleted_elements("sprint", sprintId)

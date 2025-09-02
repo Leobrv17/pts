@@ -32,6 +32,7 @@ class ProjectTransversalActivity(Model):
         default (bool): Whether this activity is activated by default when creating a project.
         created_at (datetime): The timestamp indicating when the activity was created.
         is_deleted (bool): A flag indicating if the activity is marked as deleted.
+        is_cascade_deleted (bool): A flag indicating if the activity was deleted due to cascade deletion. Defaults to `False`.
     """
     project_id: ObjectId
     activity: str
@@ -39,6 +40,7 @@ class ProjectTransversalActivity(Model):
     default: bool = True
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     is_deleted: bool = False
+    is_cascade_deleted: bool = False
 
     model_config = {"collection": "project_transversal_activity"}
 
@@ -56,6 +58,7 @@ class Project(Model):
         users (List[ObjectId]): The IDs of the users working on this project and from its service center.
         created_at (datetime): The timestamp when the project was created.
         is_deleted (bool): A flag indicating if the project has been soft-deleted.
+        is_cascade_deleted (bool): A flag indicating if the project was deleted due to cascade deletion. Defaults to `False`.
         transversal_vs_technical_workload_ratio: The ratio between technical activity and transversal activity times.
         project_transversal_activities (List[ObjectId]): The IDs corresponding to the transversal activities that can
             exist in this project.
@@ -70,6 +73,7 @@ class Project(Model):
     users: List[ObjectId] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     is_deleted: bool = False
+    is_cascade_deleted: bool = False
     transversal_vs_technical_workload_ratio: float = 1.0
     project_transversal_activities: List[ObjectId] = Field(default_factory=list)
     possible_task_statuses: Optional[Dict[str,bool]] = Field(default_factory=dict)
@@ -78,4 +82,3 @@ class Project(Model):
     task_statuses: Optional[List[str]] = Field(default_factory=list)
 
     model_config = {"collection": "project"}
-

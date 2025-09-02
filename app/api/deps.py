@@ -9,6 +9,7 @@ from app.services.task_service import TaskService
 from app.services.sprint_service import SprintService
 from app.services.project_service import ProjectService
 from app.services.service_center_service import ServiceCenterService
+from app.services.cascade_deletion_service import CascadeDeletionService
 
 
 def get_user_service(engine: AIOEngine = Depends(get_database)) -> UserService:
@@ -34,3 +35,7 @@ def get_project_service(engine: AIOEngine = Depends(get_database)) -> ProjectSer
 def get_service_center_service(engine: AIOEngine = Depends(get_database)) -> ServiceCenterService:
     """Get service center service instance."""
     return ServiceCenterService(engine)
+
+def get_cascade_deletion_service(engine: AIOEngine = Depends(get_database)) -> CascadeDeletionService:
+    """Get cascade deletion service instance."""
+    return CascadeDeletionService(engine)

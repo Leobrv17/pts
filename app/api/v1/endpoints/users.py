@@ -99,27 +99,6 @@ async def get_users(
     )
 
 
-@router.get("/search", response_model=UserByNameResponse, response_model_by_alias=False)
-async def get_users_by_name(
-        name: Optional[str] = Query(None, description="Name fragment to search for"),
-        isDeleted: Optional[bool] = Query(False, description="Include deleted users"),
-        user_service: UserService = Depends(get_user_service)
-) -> UserByNameResponse:
-    """Get users by name substring."""
-    users = await user_service.get_users_by_name(
-        name_substring=name,
-        is_deleted=isDeleted,
-        limit=10
-    )
-
-    user_responses = []
-    for user in users:
-        user_response = await build_user_response(user, user_service)
-        user_responses.append(user_response)
-
-    return UserByNameResponse(users=user_responses)
-
-
 @router.get("/{user_id}", response_model=UserResponse, response_model_by_alias=False)
 async def get_user(
         user_id: str,

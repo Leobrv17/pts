@@ -4,7 +4,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from math import ceil
 
-from app.api.deps import get_project_service
+from app.api.deps import get_project_service, get_cascade_deletion_service
 from app.api.deps import get_service_center_service
 from app.schemas.service_center import (
     ServiceCenterUpdate,
@@ -14,6 +14,7 @@ from app.schemas.service_center import (
 )
 from app.services.service_center_service import ServiceCenterService
 from app.services.project_service import ProjectService
+from app.services.cascade_deletion_service import CascadeDeletionService
 from app.schemas.project import ProjectLightResponse
 from app.schemas.general_schemas import HttpResponseDeleteStatus
 
@@ -42,10 +43,10 @@ async def create_service_center(
 @router.delete("/{serviceCenterId}", response_model=HttpResponseDeleteStatus, response_model_by_alias=False)
 async def delete_service_center(
     serviceCenterId: str,
-    service_center_service: ServiceCenterService = Depends(get_service_center_service)
+    cascade_deletion_service: CascadeDeletionService = Depends(get_cascade_deletion_service)
 ):
-    """Delete service center (soft delete)."""
-    success = await service_center_service.delete_service_center(serviceCenterId)
+    """Delete service center with cascade deletion (soft delete)."""
+    success = await cascade_deletion_service.delete_service_center_with_cascade(serviceCenterId)
     if not success:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -54,8 +55,17 @@ async def delete_service_center(
 
     return HttpResponseDeleteStatus(
         status=success,
-        msg=f"Service center {serviceCenterId} deleted successfully." if success else f"Error during deletion of service center {serviceCenterId}."
+        msg=f"Service center {serviceCenterId} and all related elements deleted successfully (cascade)" if success else f"Error during cascade deletion of service center {serviceCenterId}."
     )
+
+
+@router.get("/{serviceCenterId}/cascade-deleted", response_model=dict, response_model_by_alias=False)
+async def get_cascade_deleted_elements(
+        serviceCenterId: str,
+        cascade_deletion_service: CascadeDeletionService = Depends(get_cascade_deletion_service)
+):
+    """Get all elements that were cascade deleted from this service center."""
+    return await cascade_deletion_service.get_cascade_deleted_elements("service_center", serviceCenterId)
 
 
 @router.get("/light", response_model=ServiceCenterListResponseLight, response_model_by_alias=False)
@@ -88,6 +98,7 @@ async def get_service_centers_light(
         size=size,
         pages=ceil(total / size) if total > 0 else 0
     )
+
 
 @router.get("/{serviceCenterId}", response_model=ServiceCenterResponse, response_model_by_alias=False)
 async def get_service_center(

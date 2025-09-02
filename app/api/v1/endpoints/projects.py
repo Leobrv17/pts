@@ -1,11 +1,11 @@
-"""Project API endpoints."""
+"""Project API endpoints with cascade deletion from service centers."""
 
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from math import ceil
 
 from app.api.v1.endpoints.sprints import get_sprints_light
-from app.api.deps import get_sprint_service, get_task_service
+from app.api.deps import get_sprint_service, get_task_service, get_cascade_deletion_service
 from app.api.deps import get_project_service
 from app.schemas.project import (
     ProjectUpdate, ProjectResponse, ProjectTransversalActivityResponse,
@@ -14,6 +14,7 @@ from app.schemas.project import (
 from app.services.project_service import ProjectService
 from app.services.sprint_service import SprintService
 from app.services.task_service import TaskService
+from app.services.cascade_deletion_service import CascadeDeletionService
 from app.schemas.sprint import SprintLightResponse
 from app.schemas.general_schemas import HttpResponseDeleteStatus
 from app.utils.calculations import calculate_sprint_metrics
@@ -226,10 +227,10 @@ async def update_project(
 @router.delete("/{projectId}", response_model=HttpResponseDeleteStatus, response_model_by_alias=False)
 async def delete_project(
         projectId: str,
-        project_service: ProjectService = Depends(get_project_service)
+        cascade_deletion_service: CascadeDeletionService = Depends(get_cascade_deletion_service)
 ):
-    """Delete project (soft delete)."""
-    success = await project_service.delete_project(projectId)
+    """Delete project with cascade deletion (soft delete) - individuelle uniquement."""
+    success = await cascade_deletion_service.delete_project_with_cascade(projectId, is_cascade=False)
     if not success:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -238,8 +239,17 @@ async def delete_project(
 
     return HttpResponseDeleteStatus(
         status=success,
-        msg=f"Project {projectId} deleted successfully" if success else f"Error during deletion of project {projectId}."
+        msg=f"Project {projectId} and all related elements deleted successfully (cascade)" if success else f"Error during cascade deletion of project {projectId}."
     )
+
+
+@router.get("/{projectId}/cascade-deleted", response_model=dict, response_model_by_alias=False)
+async def get_cascade_deleted_elements(
+        projectId: str,
+        cascade_deletion_service: CascadeDeletionService = Depends(get_cascade_deletion_service)
+):
+    """Get all elements that were cascade deleted from this project."""
+    return await cascade_deletion_service.get_cascade_deleted_elements("project", projectId)
 
 
 @router.get("/byIds/", response_model=List[ProjectResponse], response_model_by_alias=False)

@@ -24,6 +24,7 @@ class SprintTransversalActivity(Model):
         time_spent (float): The time spent on the activity so far.
         created_at (datetime): The timestamp indicating when the sprint transversal activities were created.
         is_deleted (bool): A flag indicating if the sprint transversal activities are marked as deleted. Defaults to `False`.
+        is_cascade_deleted (bool): A flag indicating if the activity was deleted due to cascade deletion. Defaults to `False`.
     """
     sprintId: ObjectId
     activity: str
@@ -31,6 +32,7 @@ class SprintTransversalActivity(Model):
     time_spent: float = 0.0
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     is_deleted: bool = False
+    is_cascade_deleted: bool = False
 
     model_config = {"collection": "sprint_transversal_activity"}
 
@@ -50,6 +52,7 @@ class Sprint(Model):
         task (List[ObjectId]): The IDs of tasks associated with the sprint.
         created_at (datetime): The timestamp when the sprint was created.
         is_deleted (bool): A flag indicating if the sprint has been soft-deleted.
+        is_cascade_deleted (bool): A flag indicating if the sprint was deleted due to cascade deletion. Defaults to `False`.
         task_statuses (List[str]): The list of task statuses that can be selected in this sprint.
         task_types (List[str]): The list of task types that can be selected in this sprint.
     """
@@ -63,6 +66,7 @@ class Sprint(Model):
     task: List[ObjectId] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     is_deleted: bool = False
+    is_cascade_deleted: bool = False
     task_statuses: List[str] = Field(default_factory=list)
     task_types: List[str] = Field(default_factory=list)
 

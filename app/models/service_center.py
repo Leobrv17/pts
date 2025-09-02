@@ -26,6 +26,7 @@ class ServiceCenter(Model):
         users (List[ObjectId]): A list of user IDs associated with the service center.
         created_at (datetime): The timestamp when the service center was created.
         is_deleted (bool): A flag indicating if the service center has been soft-deleted.
+        is_cascade_deleted (bool): A flag indicating if the service center was deleted due to cascade deletion. Defaults to `False`.
         transversal_activities (List[Dict[str,str]]): The default transversal activities that will be set
             for any project in this service center.
         possible_task_statuses (Dict[str,bool]): A list of tick boxes for every status that exists (or not) for a task.
@@ -40,6 +41,7 @@ class ServiceCenter(Model):
     users: List[ObjectId] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     is_deleted: bool = False
+    is_cascade_deleted: bool = False
     transversal_activities: List[Dict[str,str]] = Field(default_factory=list)
     possible_task_statuses: Dict[str, bool] = Field(default_factory=dict)
     possible_task_types: Dict[str,bool] = Field(default_factory=dict)

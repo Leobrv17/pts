@@ -1,14 +1,15 @@
-"""Task API endpoints."""
+"""Task API endpoints with cascade deletion."""
 
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Form, UploadFile
 from math import ceil
 
-from app.api.deps import get_task_service, get_sprint_service
+from app.api.deps import get_task_service, get_sprint_service, get_cascade_deletion_service
 from app.schemas.task import TaskCreate, TaskUpdate, TaskResponse, HttpResponseTaskList, TaskSpecifics, \
     TaskSpecificsResponse, HttpResponseTaskListResponse
 from app.schemas.general_schemas import HttpResponseDeleteStatus
 from app.services.task_service import TaskService
+from app.services.cascade_deletion_service import CascadeDeletionService
 from app.models.task import ImportCSVResponse, SourceType, EXPECTED_HEADERS, DB_FIELD_MAPPING
 from app.services.sprint_service import SprintService
 from app.utils.csv_import import validate_file_and_ids, parse_csv, validate_headers, \
@@ -136,10 +137,10 @@ async def update_task(
 @router.delete("/{taskId}", response_model=HttpResponseDeleteStatus, response_model_by_alias=False)
 async def delete_task(
         taskId: str,
-        task_service: TaskService = Depends(get_task_service)
+        cascade_deletion_service: CascadeDeletionService = Depends(get_cascade_deletion_service)
 ):
-    """Delete task (soft delete)."""
-    success = await task_service.delete_task(taskId)
+    """Delete task (soft delete) - individuelle uniquement."""
+    success = await cascade_deletion_service.delete_task(taskId, is_cascade=False)
     if not success:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -225,4 +226,3 @@ async def import_csv(
     tasks, total_count, duplicate_keys, invalid_rows = await process_tasks_and_duplicates(mapped_df, sprint,
                                                                                           task_service.engine)
     return build_response(tasks, duplicate_keys, invalid_rows)
-

@@ -1,4 +1,4 @@
-"""Project service layer."""
+"""Project service layer with cascade deletion support."""
 
 from typing import List, Optional
 from bson import ObjectId
@@ -124,7 +124,7 @@ class ProjectService:
             )
 
     async def delete_project(self, project_id: str) -> bool:
-        """Soft delete project."""
+        """Soft delete project (ancienne méthode, maintenant remplacée par cascade)."""
         project = await self.get_project_by_id(project_id)
 
         project.is_deleted = True

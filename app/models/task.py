@@ -88,6 +88,7 @@ class Task(Model):
         description (str): A detailed description of the task.
         created_at (datetime): The timestamp when the task was created.
         is_deleted (bool): A flag indicating if the task has been soft-deleted.
+        is_cascade_deleted (bool): A flag indicating if the task was deleted due to cascade deletion. Defaults to `False`.
     """
     sprintId: ObjectId
     projectId: ObjectId
@@ -111,8 +112,10 @@ class Task(Model):
     description: Optional[str] = Field(default=None)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     is_deleted: bool = Field(default=False)
+    is_cascade_deleted: bool = Field(default=False)
 
     model_config = {
+        "collection": "task",
         "indexes": lambda: [IndexModel([("id", ASCENDING), ("is_deleted", ASCENDING)])]
     }
 
