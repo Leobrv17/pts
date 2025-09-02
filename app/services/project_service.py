@@ -1,4 +1,4 @@
-"""Project service layer with cascade deletion support."""
+"""Project service layer avec recalculs automatiques."""
 
 from typing import List, Optional
 from bson import ObjectId
@@ -6,11 +6,13 @@ from odmantic import AIOEngine
 from fastapi import HTTPException, status
 
 from app.models.project import Project, ProjectTransversalActivity
+from app.models.task import Task
 from app.schemas.project import ProjectUpdate, ProjectTransversalActivityCreate, ProjectBase
+from app.utils.calculations import calculate_task_metrics
 
 
 class ProjectService:
-    """Service class for project operations."""
+    """Service class for project operations avec recalculs automatiques."""
 
     _default_activities = [
         {"activity": "Ceremonies", "meaning": "SCRUM Meetings"},
@@ -38,6 +40,39 @@ class ProjectService:
     def __init__(self, engine: AIOEngine):
         self.engine = engine
 
+    async def _recalculate_project_tasks(self, project_id: ObjectId) -> bool:
+        """Recalcule toutes les tâches du projet (quand le ratio change)."""
+        try:
+            # Récupérer le projet pour obtenir le nouveau ratio
+            project = await self.engine.find_one(Project, Project.id == project_id)
+            if not project:
+                return False
+
+            # Récupérer toutes les tâches du projet
+            tasks = await self.engine.find(Task, (Task.projectId == project_id) & (Task.is_deleted == False))
+
+            for task in tasks:
+                # Recalculer les métriques avec le nouveau ratio
+                metrics = await calculate_task_metrics(task, project.transversal_vs_technical_workload_ratio)
+
+                # Mettre à jour les champs calculés
+                old_technical_load = task.technicalLoad
+                task.technicalLoad = metrics["technical_load"]
+                task.delta = metrics["delta"]
+                task.progress = metrics["progress"]
+
+                # Si le technical load a changé et que timeRemaining était égal à l'ancien technical load,
+                # on met à jour timeRemaining aussi
+                if task.timeRemaining == old_technical_load:
+                    task.timeRemaining = task.technicalLoad
+
+                await self.engine.save(task)
+
+            return True
+        except Exception as e:
+            print(f"Erreur lors du recalcul des tâches du projet {project_id}: {e}")
+            return False
+
     async def create_project(self, project_data: ProjectBase) -> Project:
         """Create a new project."""
         project = Project(
@@ -55,7 +90,7 @@ class ProjectService:
         try:
             await self.engine.save(project)
             return project
-        except Exception as e: # pragma: no cover
+        except Exception as e:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Error creating project: {str(e)}"
@@ -69,7 +104,7 @@ class ProjectService:
                 Project,
                 (Project.id == object_id) & (Project.is_deleted == is_deleted)
             )
-        except Exception as e: # pragma: no cover
+        except Exception as e:
             print(e)
             return None
 
@@ -102,9 +137,12 @@ class ProjectService:
         return projects, total
 
     async def update_project(self, project_update: ProjectUpdate) -> Optional[Project]:
-        """Update project."""
+        """Update project avec recalculs automatiques si le ratio change."""
         project = await self.get_project_by_id(project_update.id)
         update_data = project_update.model_dump(exclude_unset=True)
+
+        # Sauvegarder l'ancien ratio pour détecter les changements
+        old_ratio = project.transversal_vs_technical_workload_ratio
 
         if 'centerId' in update_data and update_data['centerId'] is not None:
             update_data['centerId'] = ObjectId(update_data.pop('centerId'))
@@ -116,15 +154,22 @@ class ProjectService:
 
         try:
             await self.engine.save(project)
+
+            # Si le ratio a changé, recalculer toutes les tâches du projet
+            if ('technicalLoadRatio' in update_data and
+                project.transversal_vs_technical_workload_ratio != old_ratio):
+                print(f"Ratio changé de {old_ratio} à {project.transversal_vs_technical_workload_ratio}, recalcul des tâches...")
+                await self._recalculate_project_tasks(project.id)
+
             return project
-        except Exception as e: # pragma: no cover
+        except Exception as e:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Error updating project: {str(e)}"
             )
 
     async def delete_project(self, project_id: str) -> bool:
-        """Soft delete project (ancienne méthode, maintenant remplacée par cascade)."""
+        """Soft delete project."""
         project = await self.get_project_by_id(project_id)
 
         project.is_deleted = True
@@ -147,13 +192,13 @@ class ProjectService:
         try:
             await self.engine.save(activity)
             return activity
-        except Exception as e: # pragma: no cover
+        except Exception as e:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Error creating project transversal activity: {str(e)}"
             )
 
-    async def create_default_transversal_activities(self, project_id: str): # pragma: no cover
+    async def create_default_transversal_activities(self, project_id: str):
         """Create default ProjectTransversalActivities for the given project."""
         for act in self._default_activities:
             await self.create_project_transversal_activity(ProjectTransversalActivityCreate(
@@ -170,7 +215,7 @@ class ProjectService:
                 ProjectTransversalActivity,
                 (ProjectTransversalActivity.id == object_id) & (ProjectTransversalActivity.is_deleted == is_deleted)
             )
-        except Exception as e: # pragma: no cover
+        except Exception as e:
             print(e)
             return None
 
@@ -190,7 +235,7 @@ class ProjectService:
                 (ProjectTransversalActivity.project_id == project_object_id) & (
                             ProjectTransversalActivity.is_deleted == is_deleted)
             )
-        except Exception as e: # pragma: no cover
+        except Exception as e:
             print(e)
             return []
 
@@ -212,7 +257,7 @@ class ProjectService:
         try:
             await self.engine.save(activity)
             return activity
-        except Exception as e: # pragma: no cover
+        except Exception as e:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Error updating project transversal activity: {str(e)}"

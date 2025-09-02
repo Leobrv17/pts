@@ -1,4 +1,4 @@
-"""Task service layer."""
+"""Task service layer avec calculs automatiques intégrés."""
 
 from typing import List, Optional
 from bson import ObjectId
@@ -6,11 +6,14 @@ from odmantic import AIOEngine
 from fastapi import HTTPException, status
 
 from app.models.task import Task, TASKRFT, TaskStatus, TaskType
+from app.models.project import Project
+from app.models.sprint import Sprint
 from app.schemas.task import TaskCreate, TaskUpdate
+from app.utils.calculations import calculate_task_metrics
 
 
 class TaskService:
-    """Service class for task operations."""
+    """Service class for task operations avec calculs automatiques."""
 
     # Map schema fields to model fields
     _field_mapping = {
@@ -70,8 +73,35 @@ class TaskService:
                 detail=f"Invalid RFT value '{rft_id}'. Valid values: {valid_rfts}"
             )
 
+    async def _calculate_and_update_fields(self, task: Task) -> Task:
+        """Calcule et met à jour les champs automatiques de la tâche."""
+        # Récupérer le projet pour obtenir le ratio
+        project = await self.engine.find_one(Project, Project.id == task.projectId)
+        if not project:
+            return task
+
+        # Calculer les métriques
+        metrics = await calculate_task_metrics(task, project.transversal_vs_technical_workload_ratio)
+
+        # Mettre à jour les champs calculés
+        task.technicalLoad = metrics["technical_load"]
+        task.delta = metrics["delta"]
+        task.progress = metrics["progress"]
+
+        # Initialiser timeRemaining si c'est la première fois ou si storyPoints a changé
+        if task.timeRemaining is None or task.timeRemaining == 0:
+            task.timeRemaining = task.technicalLoad
+
+        # Gestion automatique du Delivery Sprint
+        if task.status == TaskStatus.DONE and not task.deliverySprint:
+            sprint = await self.engine.find_one(Sprint, Sprint.id == task.sprintId)
+            if sprint:
+                task.deliverySprint = sprint.sprintName
+
+        return task
+
     async def create_task(self, task_data: TaskCreate) -> Task:
-        """Create a new task."""
+        """Create a new task avec calculs automatiques."""
         # Convert string IDs to ObjectIds
         sprint_oid = ObjectId(task_data.sprintId)
         project_oid = ObjectId(task_data.projectId)
@@ -91,21 +121,24 @@ class TaskService:
             comment="",
             deliverySprint="",
             deliveryVersion="",
-            type=task_type,  # Store enum value (e.g., "TASK", "BUG")
-            status=task_status,  # Store enum value (e.g., "TODO", "PROG")
+            type=task_type,
+            status=task_status,
             rft=TASKRFT.DEFAULT,
             technicalLoad=0,
             timeSpent=0,
-            timeRemaining=task_data.storyPoints if task_data.storyPoints else 0,
+            timeRemaining=0,
             progress=0,
             assignee=assignees,
             delta=0
         )
 
+        # Calculer les champs automatiques
+        task = await self._calculate_and_update_fields(task)
+
         try:
             await self.engine.save(task)
             return task
-        except Exception as e:  # pragma: no cover
+        except Exception as e:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Error creating task: {str(e)}"
@@ -119,7 +152,7 @@ class TaskService:
                 Task,
                 (Task.id == object_id) & (Task.is_deleted == is_deleted)
             )
-        except Exception as e: # pragma: no cover
+        except Exception as e:
             print(str(e))
             return None
 
@@ -131,12 +164,15 @@ class TaskService:
         return task
 
     async def update_task(self, task_update: TaskUpdate) -> Optional[Task]:
-        """Update task."""
+        """Update task avec recalculs automatiques."""
         task = await self.get_task_by_id(task_update.id)
-        if not task:    # pragma: no cover
+        if not task:
             return None
 
         update_data = task_update.model_dump(exclude_unset=True)
+
+        # Sauvegarder l'ancienne valeur de storyPoints pour détecter les changements
+        old_story_points = task.storyPoints
 
         # Convert string IDs to ObjectIds
         if 'sprintId' in update_data and update_data['sprintId'] is not None:
@@ -154,14 +190,26 @@ class TaskService:
         if 'rft' in update_data and update_data['rft'] is not None:
             update_data['rft'] = self._validate_and_convert_rft(update_data['rft'])
 
+        # Mettre à jour les champs
         for field, value in update_data.items():
             if field != 'id':
                 setattr(task, self._field_mapping[field], value)
 
+        # Réinitialiser timeRemaining si storyPoints a changé
+        if 'storyPoints' in update_data and task.storyPoints != old_story_points:
+            # On va recalculer le technical load et réinitialiser timeRemaining
+            project = await self.engine.find_one(Project, Project.id == task.projectId)
+            if project:
+                new_technical_load = task.storyPoints / project.transversal_vs_technical_workload_ratio
+                task.timeRemaining = new_technical_load
+
+        # Calculer les champs automatiques
+        task = await self._calculate_and_update_fields(task)
+
         try:
             await self.engine.save(task)
             return task
-        except Exception as e:  # pragma: no cover
+        except Exception as e:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Error updating task: {str(e)}"
@@ -170,7 +218,7 @@ class TaskService:
     async def delete_task(self, task_id: str) -> bool:
         """Soft delete task."""
         task = await self.get_task_by_id(task_id)
-        if not task:    # pragma: no cover
+        if not task:
             return False
 
         task.is_deleted = True
@@ -185,7 +233,7 @@ class TaskService:
                 Task,
                 (Task.sprintId == sprint_object_id) & (Task.is_deleted == is_deleted)
             )
-        except Exception as e:  # pragma: no cover
+        except Exception as e:
             print(e)
             return []
 

@@ -52,7 +52,7 @@ class ProjectAccessResponse(ProjectAccessBase):
 
 class UserBase(BaseModel):
     """Base user schema."""
-    first_name: str = Field(..., min_length=1, max_length=100, description="First name")
+    firstName: str = Field(..., min_length=1, max_length=100, description="First name")
     family_name: str = Field(..., min_length=1, max_length=100, description="Family name")
     email: EmailStr = Field(..., description="Email address")
     type: UserTypeEnum = Field(default=UserTypeEnum.NORMAL, description="User type")

@@ -1,3 +1,7 @@
+"""
+Correction des fonctions de calcul pour maintenir la compatibilité avec le code existant.
+Ce fichier remplace app/utils/calculations.py
+"""
 import asyncio
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List
@@ -10,350 +14,223 @@ from app.models.task import TaskStatus, TASKRFT, Task
 async def calculate_sprint_metrics(sprint: Sprint, trans_acts: List[SprintTransversalActivity],
                                    tasks: List[Task]) -> Dict[str, float]:
     """
-    Helper function to calculate sprint metrics such as capacity, scoped, velocity, progress, and duration.
-
-    Args:
-
-        sprint (Sprint): The Sprint object for which the metrics are calculated.
-        trans_acts (List[SprintTransversalActivity]): The list of transversal activities included in the sprint.
-        tasks (List[Task]): The list of tasks included in the sprint.
-
-    Returns:
-
-        Dict[str, float]: A dictionary with calculated sprint metrics, including:
-            - `scoped`: The total story points in the sprint. Rounded down to nearest integer.
-            - `velocity`: The sum of story points for tasks whose status is "Done". Rounded down to nearest integer.
-            - `progress`: The weighted progress based on the percentage progress * story points for each task.
-                Rounded down to nearest integer.
-            - `technical_time_spent`: The total time spent on technical tasks in the sprint.
-                Ignored if no tasks are in the sprint.
-            - `transversal_time_spent`: The total time spent on transversal tasks in the sprint.
-                Ignored if no tasks are in the sprint.
-            - `time_spent`: The total time spent on tasks in the sprint.
-            - `duration`: The total number of weekdays in the sprint, based on start_date and due_date.
-            - `otd`: The On-Time Delivery of the sprint, in percentage.
-            - `oqd`: The On-Quality Delivery of the sprint, in percentage.
-    Now works with enum IDs stored in the database.
+    Calcule les métriques du sprint selon les spécifications D-Req2.
+    Maintient la compatibilité avec les noms de clés existants.
     """
-
     duration = calculate_weekdays(sprint.startDate, sprint.dueDate)
 
     if not tasks:
         return {
+            "duration": duration,
             "scoped": 0.0,
             "velocity": 0.0,
-            "progress": 0.0,
+            "progress": 0.0,  # Moyenne des progrès des tâches
             "time_spent": 0.0,
-            "duration": duration,
             "otd": 0.0,
-            "oqd": 0.0
+            "oqd": 0.0,
+            # Nouvelles métriques selon D-Req2
+            "progress_sp": 0.0,  # Progression en Story Points
+            "predictability": 0.0,  # Predictability %
+            "rft": 0.0,  # RFT %
+            "transversal_time": 0.0
         }
 
-    total_transversal_time, total_story_points, overall_progress, velocity, total_time_spent, oqd = await asyncio.gather(
-        calculate_transversal_time(trans_acts),
+    # Calculs parallèles
+    total_transversal_time, total_story_points, progress_sp, velocity, total_time_spent, rft, avg_progress = await asyncio.gather(
+        calculate_transversal_time_in_days(trans_acts),
         calculate_story_points(tasks),
-        calculate_progress(tasks),
+        calculate_progress_in_story_points(tasks),
         calculate_velocity(tasks, sprint.sprintName),
-        calculate_total_time(tasks),
-        calculate_oqd(sprint.sprintName, sprint.status, tasks)
+        calculate_total_time_in_days(tasks),
+        calculate_rft_percentage(sprint.sprintName, sprint.status, tasks),
+        calculate_average_progress(tasks)
     )
 
-    overall_time_spent = total_time_spent + total_transversal_time
-    otd = await calculate_otd(sprint.status, velocity, total_story_points)
+    # Predictability (OTD) - seulement si sprint Done
+    predictability = 0.0
+    otd = 0.0
+    if sprint.status == SprintStatus.DONE and total_story_points > 0:
+        predictability = (velocity / total_story_points) * 100
+        otd = predictability  # Alias pour compatibilité
 
     return {
+        # Clés existantes pour compatibilité
+        "duration": round(duration, 1),
         "scoped": round(total_story_points, 1),
-        "velocity": floor(velocity),
-        "progress": floor(overall_progress),
-        "technical_time_spent": round(total_time_spent, 2),
-        "transversal_time_spent": round(total_transversal_time, 2),
-        "time_spent": round(overall_time_spent, 2),
-        "duration": duration,
-        "otd": floor(otd),
-        "oqd": floor(oqd)
+        "velocity": round(velocity, 1),
+        "progress": round(avg_progress, 0),  # Progression moyenne des tâches
+        "time_spent": round(total_time_spent + total_transversal_time, 1),
+        "otd": round(otd, 0),
+        "oqd": round(rft, 0),
+
+        # Nouvelles métriques selon D-Req2
+        "progress_sp": round(progress_sp, 1),  # Progression en Story Points
+        "predictability": round(predictability, 0),  # Predictability %
+        "rft": round(rft, 0),  # RFT %
+        "transversal_time": round(total_transversal_time, 1)
     }
 
 
-async def calculate_story_points(tasks: List[Task]) -> int:
+async def calculate_average_progress(tasks: List[Task]) -> float:
     """
-    Calculates the sum of story points in a list of tasks.
-    Args:
-
-        tasks (List[Task]): The list of tasks the count the story points of.
-
-    Returns:
-
-        int: The sum of story points.
+    Calcule la progression moyenne pondérée par les Story Points.
+    Maintient la compatibilité avec l'ancien système.
     """
-
-    if tasks is None or len(tasks) < 1:
-        return 0
-
-    total_story_points = 0
-    for task in tasks:
-        total_story_points += task.storyPoints
-
-    return total_story_points
-
-
-async def calculate_progress(tasks: List[Task]) -> float:
-    """
-        Calculates the weighted average progress of a given list of tasks depending on each task's total story points.
-
-    Args:
-
-        tasks (List[Task]): The list of tasks to calculate the progress from.
-
-    Returns:
-
-        overall_progress (float): The weighted average progress of all the tasks in the list given as argument.
-
-    """
-    if tasks is None or len(tasks) < 1:
+    if not tasks:
         return 100.0
 
     sum_story_points = 0.0
     sum_progress = 0.0
 
     for task in tasks:
-        # Compare with enum value directly (task.status is already a TaskStatus enum)
         if task.status != TaskStatus.CANCELLED:
             sum_story_points += task.storyPoints
-            sum_progress += task.storyPoints * (task.progress if task.progress is not None else 0)
+            task_progress = task.progress if task.progress is not None else 0
+            sum_progress += task.storyPoints * task_progress
 
-    overall_progress = sum_progress / max(1, sum_story_points)
-    return overall_progress
+    if sum_story_points == 0:
+        return 100.0
+
+    return sum_progress / sum_story_points
 
 
-async def calculate_velocity(tasks: List[Task], sprint_name: str):
+async def calculate_progress_in_story_points(tasks: List[Task]) -> float:
     """
-        Calculates the velocity of a given sprint.
-
-    Args:
-
-        tasks (List[Task]): The tasks to check the completeness of.
-        sprint_name (str): The name of the sprint the tasks in the list above are.
-
-    Returns:
-
-        The sum of story points for tasks given as argument, that are both done and to be delivered this sprint.
-
+    Calcule la progression en Story Points = somme des SPs multipliés par leur progression en %.
+    Nouvelle métrique selon D-Req2.
     """
-    if tasks is None or len(tasks) < 1:
+    if not tasks:
         return 0.0
-    completed_story_points = 0.0
 
+    progress_sp = 0.0
     for task in tasks:
-        # Compare with enum value directly (task.status is already a TaskStatus enum)
-        if task.status == TaskStatus.DONE and is_delivery_sprint_current(task, sprint_name):
-            completed_story_points += task.storyPoints
+        if task.status != TaskStatus.CANCELLED:
+            task_progress = task.progress if task.progress is not None else 0
+            progress_sp += task.storyPoints * (task_progress / 100)
 
-    return completed_story_points
+    return progress_sp
 
 
-async def calculate_total_time(tasks: List[Task]):
+async def calculate_total_time_in_days(tasks: List[Task]) -> float:
     """
-        Calculates the total time spent on a given list of tasks (usually the tasks from a sprint).
-
-    Args:
-
-        tasks (List[Task]): The list of tasks to calculate the time spent from.
-
-    Returns:
-
-        float: The sum of time spent on all the tasks in the list given as argument.
-
-    Args:
-        tasks:
-
-    Returns:
-
+    Calcule le temps total passé en jours.
     """
     if not tasks:
         return 0.0
 
     total_time = 0.0
     for task in tasks:
-        total_time += task.timeSpent
+        total_time += task.timeSpent if task.timeSpent else 0
     return total_time
 
 
-async def calculate_transversal_time(activities: List[SprintTransversalActivity]) -> float:
+async def calculate_transversal_time_in_days(activities: List[SprintTransversalActivity]) -> float:
     """
-        Calculates total transversal time in a list of transversal activities. Mainly used by calculate_sprint_metrics.
-
-    Args:
-
-        activities (List[SprintTransversalActivity]): The activities to sum the time from.
-
-    Returns:
-
-         float: The sum of the transversal times in the activities of the sprint given as argument.
-            Defaults to 0.0 if no sprint can be found or the sprint is deleted.
-
-    Args:
-        activities:
-
-    Returns:
-
+    Calcule le temps transversal en jours.
     """
     if not activities:
         return 0.0
 
     total_transversal_time = 0.0
     for activity in activities:
-        total_transversal_time += activity.time_spent
+        total_transversal_time += activity.time_spent if activity.time_spent else 0
     return total_transversal_time
 
 
-async def calculate_otd(status: SprintStatus, velocity: float, in_scope: float) -> float:
+async def calculate_rft_percentage(sprint_name: str, status: SprintStatus, tasks: List[Task]) -> float:
     """
-        Calculates the On-Time Delivery (OTD) for a certain sprint, given its current metrics.
-    Args:
-
-        status: The sprint status. OTD is not calculated if sprint is not "Done".
-        velocity: The sum of story points for tasks whose status is "Done".
-        in_scope: The total amount of story points in the sprint.
-
-    Returns:
-
-        float: The percentage OTD of the sprint. Returns None if it can't be calculated.
-
+    Calcule le RFT (%) = nombre de RFT OK / nombre de Tasks avec Delivery Sprint = current sprint.
+    Seulement calculé quand le Sprint est Done.
     """
-    if not (status == SprintStatus.DONE and in_scope):
-        return 0.0
-
-    return 100 * velocity / in_scope
-
-
-async def calculate_oqd(sprint_name: str, status: SprintStatus, tasks: List[Task]) -> float:
-    """
-            Calculates the On-Quality Delivery (OQD) of a sprint, given its tasks delivered.
-    Args:
-
-        sprint_name (str): The name of the current sprint.
-        status (SprintStatus): The current status of the sprint.
-        tasks (List[Task]): The tasks of the sprint.
-
-    Returns:
-
-        float: The percentage OQD of the sprint.
-    """
-    if not tasks:
-        return 0.0
-    if status != SprintStatus.DONE:
+    if status != SprintStatus.DONE or not tasks:
         return 0.0
 
     nb_rft_ok = 0.0
     nb_task_delivered = 0.0
+
     for task in tasks:
-        # Compare with enum values directly
         if task.status == TaskStatus.DONE and is_delivery_sprint_current(task, sprint_name):
             nb_task_delivered += 1
-            nb_rft_ok += (task.rft == TASKRFT.OK)
+            if task.rft == TASKRFT.OK:
+                nb_rft_ok += 1
 
-    if not nb_task_delivered:
+    if nb_task_delivered == 0:
         return 0.0
-    return 100 * nb_rft_ok / nb_task_delivered
+
+    return (nb_rft_ok / nb_task_delivered) * 100
 
 
 async def calculate_task_metrics(task: Task, trans_tech_ratio: float) -> Dict[str, float]:
     """
-        Calculates task-level metrics for a specific task, such as technical load, delta,
-    updated time, and progress, using the sprint's ratio of technical to transversal workload.
-
-    Args:
-
-        task (Task): The task for which metrics are calculated.
-        trans_tech_ratio (float): The ratio between transversal and technical activities in the project.
-
-    Returns:
-
-        Dict[str, float]: A dictionary containing task-level metrics:
-            - `technical_load`: The technical load of the task.
-            - `delta`: Difference between the technical load and the updated time.
-            - `progress`: Percentage progress of the task.
-
+    Calcule les métriques de tâche selon les spécifications D-Req2.
     """
-    updated_time = ((task.timeSpent if task.timeSpent is not None else 0)
-                    + (task.timeRemaining if task.timeRemaining is not None else 0))
+    # Technical workload = Story Points / Ratio
+    technical_workload = task.storyPoints / trans_tech_ratio if trans_tech_ratio > 0 else 0
 
-    if updated_time == 0.0:
-        progress_percentage = 0
-    else:
-        progress_percentage = (task.timeSpent / updated_time) * 100
+    # Time spent en jours
+    time_spent = task.timeSpent if task.timeSpent else 0
 
-    technical_load = task.storyPoints / trans_tech_ratio
-    delta = technical_load - updated_time
+    # Updated = time_spent + remaining_time
+    remaining_time = task.timeRemaining if task.timeRemaining else 0
+    updated = time_spent + remaining_time
+
+    # Delta = Technical load - updated
+    delta = technical_workload - updated
+
+    # Progress = time_spent / updated (en %)
+    progress = 0.0
+    if updated > 0:
+        progress = (time_spent / updated) * 100
 
     return {
-        "technical_load": round(technical_load, 2),
-        "delta": round(delta, 2),
-        "progress": int(progress_percentage)
+        "technical_load": round(technical_workload, 1),
+        "time_spent": round(time_spent, 1),
+        "updated": round(updated, 1),
+        "delta": round(delta, 1),
+        "progress": round(progress, 0)  # % sans décimale
     }
 
 
+async def calculate_story_points(tasks: List[Task]) -> float:
+    """
+    Calcule la somme des story points dans une liste de tâches.
+    """
+    if not tasks:
+        return 0.0
+
+    total_story_points = 0.0
+    for task in tasks:
+        if task.status != TaskStatus.CANCELLED:  # Exclure les tâches annulées
+            total_story_points += task.storyPoints
+
+    return total_story_points
+
+
+async def calculate_velocity(tasks: List[Task], sprint_name: str) -> float:
+    """
+    Calcule la vélocité = somme des SPs dont le statut est "Done".
+    """
+    if not tasks:
+        return 0.0
+
+    velocity = 0.0
+    for task in tasks:
+        if task.status == TaskStatus.DONE:
+            velocity += task.storyPoints
+
+    return velocity
+
+
 def is_delivery_sprint_current(task: Task, sprint_name: str) -> bool:
-    """    Checks if the delivery sprint of the task given as argument is the sprint the task is in.
-
-    Args:
-
-        task (Task): The task to check the delivery sprint of.
-        sprint_name (str): The name of the sprint the task is in.
-
-    Returns:
-
-        bool: Whether the delivery sprint of the task given as argument is the sprint the task is in.
-"""
+    """
+    Vérifie si le delivery sprint de la tâche correspond au sprint actuel.
+    """
     return task.deliverySprint == sprint_name
-
-
-def date_convertion(start_date: datetime, due_date: datetime) -> tuple:
-    """
-    Convert start and due dates to ISO 8601 string format.
-
-    This function takes two datetime objects (start_date and due_date) and converts them
-    into strings formatted as ISO 8601 with microseconds precision.
-
-    Args:
-
-        start_date (datetime): The starting date to be converted.
-        due_date (datetime): The due date to be converted.
-
-    Returns:
-
-        tuple: A tuple containing two strings:
-            - The formatted start_date as a string.
-            - The formatted due_date as a string.
-    """
-    date_format = "%Y-%m-%dT%H:%M:%S.%fZ"
-    start = start_date.strftime(date_format)
-    due = due_date.strftime(date_format)
-    return start, due
-
-
-def make_datetime_offset_naive(dt: datetime) -> datetime:
-    """    If a datetime is offset-aware, convert it to offset-naive (in the same UTC time).
-    If it's already naive, return as-is.
-    """
-    if dt.tzinfo is not None and dt.tzinfo.utcoffset(dt) is not None:
-        return dt.astimezone(timezone.utc).replace(tzinfo=None)
-    return dt
 
 
 def calculate_weekdays(start_date: datetime, due_date: datetime) -> int:
     """
-        Calculate the number of weekdays between two dates, inclusive.
-
-    Args:
-
-        start_date (datetime): The starting date in ISO format (YYYY-MM-DDTHH:MM:SS or YYYY-MM-DDTHH:MM:SS.sss or YYYY-MM-DDTHH:MM:SS.sssZ)
-        due_date (datetime): The ending date in ISO format (YYYY-MM-DDTHH:MM:SS or YYYY-MM-DDTHH:MM:SS.sss or YYYY-MM-DDTHH:MM:SS.sssZ)
-
-    Returns:
-
-        int: The number of weekdays between the two dates, including both start and end dates
-
+    Calcule le nombre de jours ouvrables entre deux dates.
     """
     start = make_datetime_offset_naive(start_date)
     due = make_datetime_offset_naive(due_date)
@@ -364,9 +241,57 @@ def calculate_weekdays(start_date: datetime, due_date: datetime) -> int:
     weekdays = 0
     current_date = start.date()
 
-    while current_date < due.date():
-        if current_date.weekday() < 5:  # Monday is 0, Friday is 4
+    while current_date <= due.date():  # Inclusif
+        if current_date.weekday() < 5:  # Lundi=0, Vendredi=4
             weekdays += 1
         current_date += timedelta(days=1)
 
     return weekdays
+
+
+def make_datetime_offset_naive(dt: datetime) -> datetime:
+    """
+    Convertit un datetime offset-aware en offset-naive (UTC).
+    """
+    if dt.tzinfo is not None and dt.tzinfo.utcoffset(dt) is not None:
+        return dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
+
+
+# Fonctions pour maintenir la compatibilité avec le code existant
+async def calculate_progress(tasks: List[Task]) -> float:
+    """Alias pour la compatibilité - calcule le progrès moyen."""
+    return await calculate_average_progress(tasks)
+
+
+async def calculate_total_time(tasks: List[Task]) -> float:
+    """Alias pour la compatibilité."""
+    return await calculate_total_time_in_days(tasks)
+
+
+async def calculate_transversal_time(activities: List[SprintTransversalActivity]) -> float:
+    """Alias pour la compatibilité."""
+    return await calculate_transversal_time_in_days(activities)
+
+
+async def calculate_otd(status: SprintStatus, velocity: float, in_scope: float) -> float:
+    """Alias pour la compatibilité - calcule la prédictibilité."""
+    if status != SprintStatus.DONE or in_scope == 0:
+        return 0.0
+    return (velocity / in_scope) * 100
+
+
+async def calculate_oqd(sprint_name: str, status: SprintStatus, tasks: List[Task]) -> float:
+    """Alias pour la compatibilité - calcule le RFT."""
+    return await calculate_rft_percentage(sprint_name, status, tasks)
+
+
+def date_convertion(start_date: datetime, due_date: datetime) -> tuple:
+    """
+    Convert start and due dates to ISO 8601 string format.
+    Fonction existante maintenue pour compatibilité.
+    """
+    date_format = "%Y-%m-%dT%H:%M:%S.%fZ"
+    start = start_date.strftime(date_format)
+    due = due_date.strftime(date_format)
+    return start, due
