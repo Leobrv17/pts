@@ -5,15 +5,17 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from math import ceil
 
 from app.api.v1.endpoints.sprints import get_sprints_light
-from app.api.deps import get_sprint_service, get_task_service, get_cascade_deletion_service
+from app.api.deps import get_sprint_service, get_task_service, get_cascade_deletion_service, get_user_service
 from app.api.deps import get_project_service
 from app.schemas.project import (
     ProjectUpdate, ProjectResponse, ProjectTransversalActivityResponse,
     ProjectListResponseLight, ProjectBase, ProjectCreate, ProjectLightResponse, ProjectTransversalActivityCreate
 )
+from app.schemas.user import UserResponse
 from app.services.project_service import ProjectService
 from app.services.sprint_service import SprintService
 from app.services.task_service import TaskService
+from app.services.user_service import UserService
 from app.services.cascade_deletion_service import CascadeDeletionService
 from app.schemas.sprint import SprintLightResponse
 from app.schemas.general_schemas import HttpResponseDeleteStatus
@@ -72,11 +74,74 @@ async def build_sprint_light_response(project_id: str,
     return sprints_response
 
 
+async def build_user_response_for_project(user, user_service: UserService) -> UserResponse:
+    """Build a complete user response with access lists for project."""
+    # Get director access list
+    director_accesses = await user_service.get_director_access_by_user(str(user.id))
+    director_access_responses = [
+        {
+            "id": str(da.id),
+            "serviceCenterId": str(da.service_center_id),
+            "serviceCenterName": da.service_center_name
+        }
+        for da in director_accesses
+    ]
+
+    # Get project access list
+    project_accesses = await user_service.get_project_access_by_user(str(user.id))
+    project_access_responses = [
+        {
+            "id": str(pa.id),
+            "serviceCenterId": str(pa.service_center_id),
+            "serviceCenterName": pa.service_center_name,
+            "projectId": str(pa.project_id),
+            "projectName": pa.project_name,
+            "accessLevel": pa.access_level,
+            "occupancyRate": pa.occupancy_rate
+        }
+        for pa in project_accesses
+    ]
+
+    return UserResponse(
+        id=str(user.id),
+        firstName=user.first_name,
+        familyName=user.family_name,
+        email=user.email,
+        type=user.type,
+        registrationNumber=user.registration_number,
+        trigram=user.trigram,
+        directorAccessList=director_access_responses,
+        projectAccessList=project_access_responses
+    )
+
+
+async def build_users_list_for_project(project_id: str, user_service: UserService) -> List[UserResponse]:
+    """Build complete users list for a project based on project access."""
+    # Récupérer tous les utilisateurs qui ont accès à ce projet
+    project_accesses = await user_service.get_project_accesses_by_project(project_id)
+    user_ids = [str(pa.user_id) for pa in project_accesses]
+
+    if not user_ids:
+        return []
+
+    # Récupérer les utilisateurs complets
+    users = await user_service.get_users_by_ids(user_ids)
+
+    # Construire les réponses complètes
+    user_responses = []
+    for user in users:
+        user_response = await build_user_response_for_project(user, user_service)
+        user_responses.append(user_response)
+
+    return user_responses
+
+
 @router.post("/", response_model=ProjectResponse, status_code=status.HTTP_201_CREATED, response_model_by_alias=False)
 async def create_project(
         projectData: ProjectCreate,
         project_service: ProjectService = Depends(get_project_service),
-        task_service: TaskService = Depends(get_task_service)
+        task_service: TaskService = Depends(get_task_service),
+        user_service: UserService = Depends(get_user_service)
 ) -> ProjectResponse:
     """Create a new project."""
     task_statuses = await task_service.get_task_status_list()
@@ -96,6 +161,7 @@ async def create_project(
     await project_service.create_default_transversal_activities(str(project.id))
 
     trans_acts_response = await build_trans_act_response(str(project.id), project_service)
+    users_response = await build_users_list_for_project(str(project.id), user_service)
 
     return ProjectResponse(
         _id=str(project.id),
@@ -103,7 +169,7 @@ async def create_project(
         status=project.status,
         centerId=str(project.centerId) if project.centerId else None,
         sprints=[],
-        users=[],
+        users=users_response,
         technicalLoadRatio=project.transversal_vs_technical_workload_ratio,
         transversalActivities=trans_acts_response,
         taskStatuses=task_statuses,
@@ -164,7 +230,8 @@ async def update_project(
         projectUpdate: ProjectUpdate,
         project_service: ProjectService = Depends(get_project_service),
         sprint_service: SprintService = Depends(get_sprint_service),
-        task_service: TaskService = Depends(get_task_service)
+        task_service: TaskService = Depends(get_task_service),
+        user_service: UserService = Depends(get_user_service)
 ) -> ProjectResponse:
     """Update project."""
     task_statuses = await task_service.get_task_status_list()
@@ -209,6 +276,7 @@ async def update_project(
 
     sprints_response = await build_sprint_light_response(str(project.id), sprint_service, task_service)
     trans_acts_response = await build_trans_act_response(str(project.id), project_service)
+    users_response = await build_users_list_for_project(str(project.id), user_service)
 
     return ProjectResponse(
         _id=str(project.id),
@@ -216,7 +284,7 @@ async def update_project(
         status=project.status,
         centerId=str(project.centerId) if project.centerId else None,
         sprints=sprints_response,
-        users=[],
+        users=users_response,
         taskTypes=project.task_types,
         taskStatuses=project.task_statuses,
         technicalLoadRatio=project.transversal_vs_technical_workload_ratio,
@@ -243,13 +311,13 @@ async def delete_project(
     )
 
 
-@router.get("/{projectId}/cascade-deleted", response_model=dict, response_model_by_alias=False)
-async def get_cascade_deleted_elements(
-        projectId: str,
-        cascade_deletion_service: CascadeDeletionService = Depends(get_cascade_deletion_service)
-):
-    """Get all elements that were cascade deleted from this project."""
-    return await cascade_deletion_service.get_cascade_deleted_elements("project", projectId)
+# @router.get("/{projectId}/cascade-deleted", response_model=dict, response_model_by_alias=False)
+# async def get_cascade_deleted_elements(
+#         projectId: str,
+#         cascade_deletion_service: CascadeDeletionService = Depends(get_cascade_deletion_service)
+# ):
+#     """Get all elements that were cascade deleted from this project."""
+#     return await cascade_deletion_service.get_cascade_deleted_elements("project", projectId)
 
 
 @router.get("/byIds/", response_model=List[ProjectResponse], response_model_by_alias=False)
@@ -258,7 +326,8 @@ async def get_projects_by_ids(
         isDeleted: Optional[bool] = Query(False, description="Filter by deleted projects"),
         project_service: ProjectService = Depends(get_project_service),
         sprint_service: SprintService = Depends(get_sprint_service),
-        task_service: TaskService = Depends(get_task_service)
+        task_service: TaskService = Depends(get_task_service),
+        user_service: UserService = Depends(get_user_service)
 ) -> List[ProjectResponse]:
     """Get projects by a list of IDs."""
     project_responses = []
@@ -275,6 +344,7 @@ async def get_projects_by_ids(
 
         sprints_response = await build_sprint_light_response(pid, sprint_service, task_service)
         trans_acts_response = await build_trans_act_response(pid, project_service)
+        users_response = await build_users_list_for_project(pid, user_service)
 
         project_responses.append(
             ProjectResponse(
@@ -283,7 +353,7 @@ async def get_projects_by_ids(
                 status=project.status,
                 centerId=str(project.centerId) if project.centerId else None,
                 sprints=sprints_response,
-                users=[],
+                users=users_response,
                 taskTypes=task_types,
                 taskStatuses=task_statuses,
                 technicalLoadRatio=project.transversal_vs_technical_workload_ratio,

@@ -6,7 +6,7 @@ from math import ceil
 
 from app.api.deps import get_user_service
 from app.schemas.user import (
-    UserCreate, UserUpdate, UserResponse, UserListResponse,
+    UserCreate, UserLite, UserResponse, UserListResponse,
     DirectorAccessCreate, DirectorAccessUpdate, DirectorAccessResponse,
     ProjectAccessCreate, ProjectAccessUpdate, ProjectAccessResponse,
     UserByNameRequest, UserByNameResponse
@@ -128,17 +128,19 @@ async def get_users_by_ids(
     return user_responses
 
 
-
-
-
-@router.put("/{userId}", response_model=UserResponse, response_model_by_alias=False)
+@router.put("/update", response_model=UserResponse, response_model_by_alias=False)
 async def update_user(
-        userId: str,
-        userUpdate: UserUpdate,
+        userLite: UserLite,
         user_service: UserService = Depends(get_user_service)
 ) -> UserResponse:
     """Update user."""
-    user = await user_service.update_user(userId, userUpdate)
+    if not userLite.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="User ID is required"
+        )
+
+    user = await user_service.update_user_lite(userLite)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

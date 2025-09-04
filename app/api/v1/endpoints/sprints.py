@@ -314,12 +314,3 @@ async def delete_sprint(
         status=success,
         msg=f"Sprint {sprintId} and all related tasks deleted successfully (cascade)" if success else f"Error during cascade deletion of sprint {sprintId}."
     )
-
-
-@router.get("/{sprintId}/cascade-deleted", response_model=dict, response_model_by_alias=False)
-async def get_cascade_deleted_elements(
-        sprintId: str,
-        cascade_deletion_service: CascadeDeletionService = Depends(get_cascade_deletion_service)
-):
-    """Get all elements that were cascade deleted from this sprint."""
-    return await cascade_deletion_service.get_cascade_deleted_elements("sprint", sprintId)

@@ -10,13 +10,15 @@ from app.models.user import UserTypeEnum, AccessLevelEnum
 
 class DirectorAccessBase(BaseModel):
     """Base schema for director access."""
+    id: Optional[str] = Field(default=None, description="Director access ID")
     serviceCenterId: str = Field(..., description="Service center ID")
-    serviceCenterName: str = Field(..., description="Service center name")
 
 
-class DirectorAccessResponse(DirectorAccessBase):
+class DirectorAccessResponse(BaseModel):
     """Schema for director access response."""
     id: str = Field(..., description="Director access ID")
+    serviceCenterId: str = Field(..., description="Service center ID")
+    serviceCenterName: str = Field(..., description="Service center name")
 
     class Config:
         from_attributes = True
@@ -29,17 +31,22 @@ class DirectorAccessResponse(DirectorAccessBase):
 
 class ProjectAccessBase(BaseModel):
     """Base schema for project access."""
+    id: Optional[str] = Field(default=None, description="Project access ID")
+    serviceCenterId: str = Field(..., description="Service center ID")
+    projectId: str = Field(..., description="Project ID")
+    accessLevel: AccessLevelEnum = Field(..., description="Access level")
+    occupancyRate: float = Field(..., ge=0.0, le=100.0, description="Occupancy rate percentage")
+
+
+class ProjectAccessResponse(BaseModel):
+    """Schema for project access response."""
+    id: str = Field(..., description="Project access ID")
     serviceCenterId: str = Field(..., description="Service center ID")
     serviceCenterName: str = Field(..., description="Service center name")
     projectId: str = Field(..., description="Project ID")
     projectName: str = Field(..., description="Project name")
     accessLevel: AccessLevelEnum = Field(..., description="Access level")
     occupancyRate: float = Field(..., ge=0.0, le=100.0, description="Occupancy rate percentage")
-
-
-class ProjectAccessResponse(ProjectAccessBase):
-    """Schema for project access response."""
-    id: str = Field(..., description="Project access ID")
 
     class Config:
         from_attributes = True
@@ -52,10 +59,24 @@ class ProjectAccessResponse(ProjectAccessBase):
 
 class UserBase(BaseModel):
     """Base user schema."""
+    id: Optional[str] = Field(default=None, description="User ID")
     firstName: str = Field(..., min_length=1, max_length=100, description="First name")
     familyName: str = Field(..., min_length=1, max_length=100, description="Family name")
     email: EmailStr = Field(..., description="Email address")
     type: UserTypeEnum = Field(default=UserTypeEnum.NORMAL, description="User type")
+    registrationNumber: Optional[str] = Field(default="", max_length=50, description="Registration number/matricule")
+    trigram: str = Field(..., min_length=3, max_length=3, pattern="^[A-Z]{3}$", description="3-letter trigram")
+
+
+class UserLite(BaseModel):
+    """Schema for user lite with access management."""
+    id: Optional[str] = Field(default=None, description="User ID")
+    firstName: str = Field(..., min_length=1, max_length=100, description="First name")
+    familyName: str = Field(..., min_length=1, max_length=100, description="Family name")
+    email: EmailStr = Field(..., description="Email address")
+    type: UserTypeEnum = Field(default=UserTypeEnum.NORMAL, description="User type")
+    directorAccessList: Optional[List[DirectorAccessBase]] = Field(default_factory=list, description="Director access list")
+    projectAccessList: Optional[List[ProjectAccessBase]] = Field(default_factory=list, description="Project access list")
     registrationNumber: Optional[str] = Field(default="", max_length=50, description="Registration number/matricule")
     trigram: str = Field(..., min_length=3, max_length=3, pattern="^[A-Z]{3}$", description="3-letter trigram")
 

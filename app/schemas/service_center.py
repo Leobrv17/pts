@@ -7,7 +7,7 @@ from bson import ObjectId
 
 from app.models.service_center import ServiceCenterStatus
 from app.schemas.project import ProjectLightResponse
-from app.schemas.user import UserResponse
+from app.schemas.user import UserBase
 
 
 class ServiceCenterBase(BaseModel):
@@ -42,7 +42,7 @@ class ServiceCenterResponse(ServiceCenterBase):
     """Schema for service center response."""
     id: str = Field(..., description="Center ID")
     projects: List[ProjectLightResponse] = Field(default_factory=list, description="The projects included in the center, in light version.")
-    users: List[UserResponse] = Field(default_factory=list, description="The users that work in the center.")
+    users: List[UserBase] = Field(default_factory=list, description="The users that work in the center (UserBase format).")
 
     class Config:
         from_attributes = True

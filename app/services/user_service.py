@@ -1,4 +1,4 @@
-"""User service layer."""
+"""User service layer extended with methods for Project and ServiceCenter."""
 
 import re
 from typing import List, Optional
@@ -8,8 +8,8 @@ from fastapi import HTTPException, status
 
 from app.models.user import User, DirectorAccess, ProjectAccess
 from app.schemas.user import (
-    UserCreate, UserUpdate, DirectorAccessCreate, DirectorAccessUpdate,
-    ProjectAccessCreate, ProjectAccessUpdate
+    UserCreate, UserUpdate, UserLite, DirectorAccessCreate, DirectorAccessUpdate,
+    ProjectAccessCreate, ProjectAccessUpdate, DirectorAccessBase, ProjectAccessBase
 )
 
 
@@ -50,6 +50,17 @@ class UserService:
             update_data['trigram'] = user_update.trigram
 
         return update_data
+
+    def _map_user_lite_to_snake(self, user_lite: UserLite) -> dict:
+        """Map CamelCase UserLite fields to snake_case model fields."""
+        return {
+            'first_name': user_lite.firstName,
+            'family_name': user_lite.familyName,
+            'email': user_lite.email,
+            'type': user_lite.type,
+            'registration_number': user_lite.registrationNumber or "",
+            'trigram': user_lite.trigram
+        }
 
     def _map_director_access_camelcase_to_snake(self, access_data: DirectorAccessCreate) -> dict:
         """Map CamelCase director access fields to snake_case model fields."""
@@ -148,6 +159,153 @@ class UserService:
             limit=limit
         )
         return users
+
+    # New methods for Project and ServiceCenter integration
+    async def get_project_accesses_by_project(self, project_id: str, is_deleted: bool = False) -> List[ProjectAccess]:
+        """Get all project accesses for a specific project."""
+        try:
+            project_object_id = ObjectId(project_id)
+            return await self.engine.find(
+                ProjectAccess,
+                (ProjectAccess.project_id == project_object_id) & (ProjectAccess.is_deleted == is_deleted)
+            )
+        except Exception as e:
+            print(f"Error getting project accesses by project: {e}")
+            return []
+
+    async def get_director_accesses_by_service_center(self, service_center_id: str, is_deleted: bool = False) -> List[DirectorAccess]:
+        """Get all director accesses for a specific service center."""
+        try:
+            service_center_object_id = ObjectId(service_center_id)
+            return await self.engine.find(
+                DirectorAccess,
+                (DirectorAccess.service_center_id == service_center_object_id) & (DirectorAccess.is_deleted == is_deleted)
+            )
+        except Exception as e:
+            print(f"Error getting director accesses by service center: {e}")
+            return []
+
+    async def get_project_accesses_by_service_center(self, service_center_id: str, is_deleted: bool = False) -> List[ProjectAccess]:
+        """Get all project accesses for a specific service center."""
+        try:
+            service_center_object_id = ObjectId(service_center_id)
+            return await self.engine.find(
+                ProjectAccess,
+                (ProjectAccess.service_center_id == service_center_object_id) & (ProjectAccess.is_deleted == is_deleted)
+            )
+        except Exception as e:
+            print(f"Error getting project accesses by service center: {e}")
+            return []
+
+    async def update_user_lite(self, user_lite: UserLite) -> Optional[User]:
+        """Update user with UserLite schema."""
+        user = await self.get_user_by_id(user_lite.id)
+        if not user:
+            return None
+
+        # Mise à jour des champs de base
+        update_data = self._map_user_lite_to_snake(user_lite)
+        for field, value in update_data.items():
+            setattr(user, field, value)
+
+        try:
+            # Gestion des director accesses
+            if user_lite.directorAccessList is not None:
+                await self._manage_director_accesses_from_base(user, user_lite.directorAccessList)
+
+            # Gestion des project accesses
+            if user_lite.projectAccessList is not None:
+                await self._manage_project_accesses_from_base(user, user_lite.projectAccessList)
+
+            return await self.engine.save(user)
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Error updating user: {str(e)}"
+            )
+
+    async def _manage_director_accesses_from_base(self, user: User, director_accesses: List[DirectorAccessBase]):
+        """Manage director accesses from DirectorAccessBase objects."""
+        # Supprimer tous les accès existants
+        existing_accesses = await self.engine.find(
+            DirectorAccess,
+            (DirectorAccess.user_id == user.id) & (DirectorAccess.is_deleted == False)
+        )
+        for access in existing_accesses:
+            access.is_deleted = True
+            await self.engine.save(access)
+
+        # Vider la liste dans l'utilisateur
+        user.director_access_list = []
+
+        # Créer les nouveaux accès
+        for access_data in director_accesses:
+            if access_data.id:
+                # Si un ID est fourni, essayer de réactiver un accès existant
+                existing_access = await self.engine.find_one(
+                    DirectorAccess,
+                    DirectorAccess.id == ObjectId(access_data.id)
+                )
+                if existing_access:
+                    existing_access.is_deleted = False
+                    existing_access.service_center_id = ObjectId(access_data.serviceCenterId)
+                    saved_access = await self.engine.save(existing_access)
+                    user.director_access_list.append(saved_access.id)
+                    continue
+
+            # Créer un nouvel accès
+            director_access = DirectorAccess(
+                user_id=user.id,
+                service_center_id=ObjectId(access_data.serviceCenterId),
+                service_center_name=""  # Sera mis à jour par le service si nécessaire
+            )
+            saved_access = await self.engine.save(director_access)
+            user.director_access_list.append(saved_access.id)
+
+    async def _manage_project_accesses_from_base(self, user: User, project_accesses: List[ProjectAccessBase]):
+        """Manage project accesses from ProjectAccessBase objects."""
+        # Supprimer tous les accès existants
+        existing_accesses = await self.engine.find(
+            ProjectAccess,
+            (ProjectAccess.user_id == user.id) & (ProjectAccess.is_deleted == False)
+        )
+        for access in existing_accesses:
+            access.is_deleted = True
+            await self.engine.save(access)
+
+        # Vider la liste dans l'utilisateur
+        user.project_access_list = []
+
+        # Créer les nouveaux accès
+        for access_data in project_accesses:
+            if access_data.id:
+                # Si un ID est fourni, essayer de réactiver un accès existant
+                existing_access = await self.engine.find_one(
+                    ProjectAccess,
+                    ProjectAccess.id == ObjectId(access_data.id)
+                )
+                if existing_access:
+                    existing_access.is_deleted = False
+                    existing_access.service_center_id = ObjectId(access_data.serviceCenterId)
+                    existing_access.project_id = ObjectId(access_data.projectId)
+                    existing_access.access_level = access_data.accessLevel
+                    existing_access.occupancy_rate = access_data.occupancyRate
+                    saved_access = await self.engine.save(existing_access)
+                    user.project_access_list.append(saved_access.id)
+                    continue
+
+            # Créer un nouvel accès
+            project_access = ProjectAccess(
+                user_id=user.id,
+                service_center_id=ObjectId(access_data.serviceCenterId),
+                service_center_name="",  # Sera mis à jour par le service si nécessaire
+                project_id=ObjectId(access_data.projectId),
+                project_name="",  # Sera mis à jour par le service si nécessaire
+                access_level=access_data.accessLevel,
+                occupancy_rate=access_data.occupancyRate
+            )
+            saved_access = await self.engine.save(project_access)
+            user.project_access_list.append(saved_access.id)
 
     async def update_user(self, user_id: str, user_update: UserUpdate) -> Optional[User]:
         """Update user with access management."""
