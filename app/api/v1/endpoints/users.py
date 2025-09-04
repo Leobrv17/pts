@@ -24,8 +24,8 @@ async def build_user_response(user, user_service: UserService) -> UserResponse:
     director_access_responses = [
         DirectorAccessResponse(
             id=str(da.id),
-            service_center_id=str(da.service_center_id),
-            service_center_name=da.service_center_name
+            serviceCenterId=str(da.service_center_id),
+            serviceCenterName=da.service_center_name
         )
         for da in director_accesses
     ]
@@ -35,36 +35,36 @@ async def build_user_response(user, user_service: UserService) -> UserResponse:
     project_access_responses = [
         ProjectAccessResponse(
             id=str(pa.id),
-            service_center_id=str(pa.service_center_id),
-            service_center_name=pa.service_center_name,
-            project_id=str(pa.project_id),
-            project_name=pa.project_name,
-            access_level=pa.access_level,
-            occupancy_rate=pa.occupancy_rate
+            serviceCenterId=str(pa.service_center_id),
+            serviceCenterName=pa.service_center_name,
+            projectId=str(pa.project_id),
+            projectName=pa.project_name,
+            accessLevel=pa.access_level,
+            occupancyRate=pa.occupancy_rate
         )
         for pa in project_accesses
     ]
 
     return UserResponse(
-        _id=str(user.id),
-        first_name=user.first_name,
-        family_name=user.family_name,
+        id=str(user.id),
+        firstName=user.first_name,
+        familyName=user.family_name,
         email=user.email,
         type=user.type,
-        registration_number=user.registration_number,
+        registrationNumber=user.registration_number,
         trigram=user.trigram,
-        director_access_list=director_access_responses,
-        project_access_list=project_access_responses
+        directorAccessList=director_access_responses,
+        projectAccessList=project_access_responses
     )
 
 
 @router.post("/", response_model=UserResponse, status_code=status.HTTP_201_CREATED, response_model_by_alias=False)
 async def create_user(
-        user_data: UserCreate,
+        userData: UserCreate,
         user_service: UserService = Depends(get_user_service)
 ) -> UserResponse:
     """Create a new user."""
-    user = await user_service.create_user(user_data)
+    user = await user_service.create_user(userData)
     return await build_user_response(user, user_service)
 
 
@@ -99,31 +99,46 @@ async def get_users(
     )
 
 
-@router.get("/{user_id}", response_model=UserResponse, response_model_by_alias=False)
-async def get_user(
-        user_id: str,
-        isDeleted: bool = Query(False, description="Include deleted user"),
+@router.get("/byIds/", response_model=List[UserResponse], response_model_by_alias=False)
+async def get_users_by_ids(
+        userIds: List[str] = Query(..., description="List of user IDs to retrieve"),
+        isDeleted: Optional[bool] = Query(False, description="Include deleted users"),
         user_service: UserService = Depends(get_user_service)
-) -> UserResponse:
-    """Get user by ID."""
-    user = await user_service.get_user_by_id(user_id, isDeleted)
-    if not user:
+) -> List[UserResponse]:
+    """Get users by a list of IDs."""
+    # Récupérer tous les utilisateurs d'un coup pour optimiser
+    users = await user_service.get_users_by_ids(userIds, isDeleted)
+
+    # Vérifier que tous les utilisateurs demandés ont été trouvés
+    found_user_ids = {str(user.id) for user in users}
+    missing_user_ids = set(userIds) - found_user_ids
+
+    if missing_user_ids:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
+            detail=f"Users not found: {', '.join(missing_user_ids)}"
         )
 
-    return await build_user_response(user, user_service)
+    # Construire les réponses
+    user_responses = []
+    for user in users:
+        user_response = await build_user_response(user, user_service)
+        user_responses.append(user_response)
+
+    return user_responses
 
 
-@router.put("/{user_id}", response_model=UserResponse, response_model_by_alias=False)
+
+
+
+@router.put("/{userId}", response_model=UserResponse, response_model_by_alias=False)
 async def update_user(
-        user_id: str,
-        user_update: UserUpdate,
+        userId: str,
+        userUpdate: UserUpdate,
         user_service: UserService = Depends(get_user_service)
 ) -> UserResponse:
     """Update user."""
-    user = await user_service.update_user(user_id, user_update)
+    user = await user_service.update_user(userId, userUpdate)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -133,15 +148,15 @@ async def update_user(
     return await build_user_response(user, user_service)
 
 
-@router.delete("/{user_id}", response_model=HttpResponseDeleteStatus, response_model_by_alias=False)
+@router.delete("/{userId}", response_model=HttpResponseDeleteStatus, response_model_by_alias=False)
 async def delete_user(
-        user_id: str,
+        userId: str,
         user_service: UserService = Depends(get_user_service)
 ) -> HttpResponseDeleteStatus:
     """Delete user (soft delete)."""
-    success = await user_service.delete_user(user_id)
+    success = await user_service.delete_user(userId)
 
     return HttpResponseDeleteStatus(
         status=success,
-        msg=f"User {user_id} deleted successfully" if success else f"Error during deletion of user {user_id}"
+        msg=f"User {userId} deleted successfully" if success else f"Error during deletion of user {userId}"
     )

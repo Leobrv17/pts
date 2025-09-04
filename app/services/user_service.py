@@ -19,18 +19,62 @@ class UserService:
     def __init__(self, engine: AIOEngine):
         self.engine = engine
 
+    def _map_camelcase_to_snake(self, user_data: UserCreate) -> dict:
+        """Map CamelCase schema fields to snake_case model fields."""
+        return {
+            'first_name': user_data.firstName,
+            'family_name': user_data.familyName,
+            'email': user_data.email,
+            'type': user_data.type,
+            'registration_number': user_data.registrationNumber or "",
+            'trigram': user_data.trigram,
+            'director_access_list': [],
+            'project_access_list': []
+        }
+
+    def _map_update_camelcase_to_snake(self, user_update: UserUpdate) -> dict:
+        """Map CamelCase update fields to snake_case model fields."""
+        update_data = {}
+
+        if user_update.firstName is not None:
+            update_data['first_name'] = user_update.firstName
+        if user_update.familyName is not None:
+            update_data['family_name'] = user_update.familyName
+        if user_update.email is not None:
+            update_data['email'] = user_update.email
+        if user_update.type is not None:
+            update_data['type'] = user_update.type
+        if user_update.registrationNumber is not None:
+            update_data['registration_number'] = user_update.registrationNumber
+        if user_update.trigram is not None:
+            update_data['trigram'] = user_update.trigram
+
+        return update_data
+
+    def _map_director_access_camelcase_to_snake(self, access_data: DirectorAccessCreate) -> dict:
+        """Map CamelCase director access fields to snake_case model fields."""
+        return {
+            'user_id': ObjectId(access_data.userId),
+            'service_center_id': ObjectId(access_data.serviceCenterId),
+            'service_center_name': access_data.serviceCenterName
+        }
+
+    def _map_project_access_camelcase_to_snake(self, access_data: ProjectAccessCreate) -> dict:
+        """Map CamelCase project access fields to snake_case model fields."""
+        return {
+            'user_id': ObjectId(access_data.userId),
+            'service_center_id': ObjectId(access_data.serviceCenterId),
+            'service_center_name': access_data.serviceCenterName,
+            'project_id': ObjectId(access_data.projectId),
+            'project_name': access_data.projectName,
+            'access_level': access_data.accessLevel,
+            'occupancy_rate': access_data.occupancyRate
+        }
+
     async def create_user(self, user_data: UserCreate) -> User:
         """Create a new user."""
-        user = User(
-            first_name=user_data.first_name,
-            family_name=user_data.family_name,
-            email=user_data.email,
-            type=user_data.type,
-            registration_number=user_data.registration_number or "",
-            trigram=user_data.trigram,
-            director_access_list=[],
-            project_access_list=[]
-        )
+        user_dict = self._map_camelcase_to_snake(user_data)
+        user = User(**user_dict)
 
         try:
             return await self.engine.save(user)
@@ -39,6 +83,19 @@ class UserService:
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Error creating user: {str(e)}"
             )
+
+    async def get_users_by_ids(self, user_ids: List[str], is_deleted: bool = False) -> List[User]:
+        """Get multiple users by their IDs."""
+        try:
+            object_ids = [ObjectId(user_id) for user_id in user_ids]
+            users = await self.engine.find(
+                User,
+                (User.id.in_(object_ids)) & (User.is_deleted == is_deleted)
+            )
+            return users
+        except Exception as e:
+            print(f"Error getting users by IDs: {e}")
+            return []
 
     async def get_user_by_id(self, user_id: str, is_deleted: bool = False) -> Optional[User]:
         """Get user by ID."""
@@ -101,29 +158,26 @@ class UserService:
                 detail=f"User {user_id} not found"
             )
 
-        # Mise à jour des champs de base
-        update_data = user_update.model_dump(exclude_unset=True, exclude={
-            'director_accesses', 'project_accesses',
-            'remove_director_accesses', 'remove_project_accesses'
-        })
+        # Mise à jour des champs de base avec mapping CamelCase vers snake_case
+        update_data = self._map_update_camelcase_to_snake(user_update)
 
         for field, value in update_data.items():
             setattr(user, field, value)
 
         try:
             # Gestion des director accesses
-            if user_update.director_accesses is not None:
-                await self._manage_director_accesses(user, user_update.director_accesses)
+            if user_update.directorAccesses is not None:
+                await self._manage_director_accesses(user, user_update.directorAccesses)
 
-            if user_update.remove_director_accesses:
-                await self._remove_director_accesses(user, user_update.remove_director_accesses)
+            if user_update.removeDirectorAccesses:
+                await self._remove_director_accesses(user, user_update.removeDirectorAccesses)
 
             # Gestion des project accesses
-            if user_update.project_accesses is not None:
-                await self._manage_project_accesses(user, user_update.project_accesses)
+            if user_update.projectAccesses is not None:
+                await self._manage_project_accesses(user, user_update.projectAccesses)
 
-            if user_update.remove_project_accesses:
-                await self._remove_project_accesses(user, user_update.remove_project_accesses)
+            if user_update.removeProjectAccesses:
+                await self._remove_project_accesses(user, user_update.removeProjectAccesses)
 
             return await self.engine.save(user)
         except Exception as e:
@@ -139,17 +193,15 @@ class UserService:
             existing_access = await self.engine.find_one(
                 DirectorAccess,
                 (DirectorAccess.user_id == user.id) &
-                (DirectorAccess.service_center_id == ObjectId(access_data.service_center_id)) &
+                (DirectorAccess.service_center_id == ObjectId(access_data.serviceCenterId)) &
                 (DirectorAccess.is_deleted == False)
             )
 
             if not existing_access:
-                # Créer un nouveau director access
-                director_access = DirectorAccess(
-                    user_id=user.id,
-                    service_center_id=ObjectId(access_data.service_center_id),
-                    service_center_name=access_data.service_center_name
-                )
+                # Créer un nouveau director access avec mapping CamelCase vers snake_case
+                director_access_dict = self._map_director_access_camelcase_to_snake(access_data)
+                director_access_dict['user_id'] = user.id  # Override avec l'ID correct
+                director_access = DirectorAccess(**director_access_dict)
                 saved_access = await self.engine.save(director_access)
 
                 # Ajouter à la liste de l'utilisateur
@@ -157,7 +209,7 @@ class UserService:
                     user.director_access_list.append(saved_access.id)
             else:
                 # Mettre à jour l'accès existant si nécessaire
-                existing_access.service_center_name = access_data.service_center_name
+                existing_access.service_center_name = access_data.serviceCenterName
                 await self.engine.save(existing_access)
 
     async def _remove_director_accesses(self, user: User, access_ids: List[str]):
@@ -187,21 +239,15 @@ class UserService:
             existing_access = await self.engine.find_one(
                 ProjectAccess,
                 (ProjectAccess.user_id == user.id) &
-                (ProjectAccess.project_id == ObjectId(access_data.project_id)) &
+                (ProjectAccess.project_id == ObjectId(access_data.projectId)) &
                 (ProjectAccess.is_deleted == False)
             )
 
             if not existing_access:
-                # Créer un nouveau project access
-                project_access = ProjectAccess(
-                    user_id=user.id,
-                    service_center_id=ObjectId(access_data.service_center_id),
-                    service_center_name=access_data.service_center_name,
-                    project_id=ObjectId(access_data.project_id),
-                    project_name=access_data.project_name,
-                    access_level=access_data.access_level,
-                    occupancy_rate=access_data.occupancy_rate
-                )
+                # Créer un nouveau project access avec mapping CamelCase vers snake_case
+                project_access_dict = self._map_project_access_camelcase_to_snake(access_data)
+                project_access_dict['user_id'] = user.id  # Override avec l'ID correct
+                project_access = ProjectAccess(**project_access_dict)
                 saved_access = await self.engine.save(project_access)
 
                 # Ajouter à la liste de l'utilisateur
@@ -209,10 +255,10 @@ class UserService:
                     user.project_access_list.append(saved_access.id)
             else:
                 # Mettre à jour l'accès existant
-                existing_access.service_center_name = access_data.service_center_name
-                existing_access.project_name = access_data.project_name
-                existing_access.access_level = access_data.access_level
-                existing_access.occupancy_rate = access_data.occupancy_rate
+                existing_access.service_center_name = access_data.serviceCenterName
+                existing_access.project_name = access_data.projectName
+                existing_access.access_level = access_data.accessLevel
+                existing_access.occupancy_rate = access_data.occupancyRate
                 await self.engine.save(existing_access)
 
     async def _remove_project_accesses(self, user: User, access_ids: List[str]):
