@@ -7,6 +7,8 @@ from odmantic import AIOEngine, query
 from fastapi import HTTPException, status
 
 from app.models.user import User, DirectorAccess, ProjectAccess
+from app.models.service_center import ServiceCenter
+from app.models.project import Project
 from app.schemas.user import (
     UserCreate, UserUpdate, UserLite, DirectorAccessCreate, DirectorAccessUpdate,
     ProjectAccessCreate, ProjectAccessUpdate, DirectorAccessBase, ProjectAccessBase
@@ -67,7 +69,7 @@ class UserService:
         return {
             'user_id': ObjectId(access_data.userId),
             'service_center_id': ObjectId(access_data.serviceCenterId),
-            'service_center_name': access_data.serviceCenterName
+            'service_center_name': ""  # Sera rempli par _get_service_center_name
         }
 
     def _map_project_access_camelcase_to_snake(self, access_data: ProjectAccessCreate) -> dict:
@@ -75,12 +77,52 @@ class UserService:
         return {
             'user_id': ObjectId(access_data.userId),
             'service_center_id': ObjectId(access_data.serviceCenterId),
-            'service_center_name': access_data.serviceCenterName,
+            'service_center_name': "",  # Sera rempli par _get_service_center_name
             'project_id': ObjectId(access_data.projectId),
-            'project_name': access_data.projectName,
+            'project_name': "",  # Sera rempli par _get_project_name
             'access_level': access_data.accessLevel,
             'occupancy_rate': access_data.occupancyRate
         }
+
+    async def _get_service_center_name(self, service_center_id: ObjectId) -> str:
+        """Get service center name by ID."""
+        try:
+            service_center = await self.engine.find_one(
+                ServiceCenter,
+                (ServiceCenter.id == service_center_id) & (ServiceCenter.is_deleted == False)
+            )
+            return service_center.centerName if service_center else ""
+        except Exception as e:
+            print(f"Error getting service center name: {e}")
+            return ""
+
+    async def _get_project_name(self, project_id: ObjectId) -> str:
+        """Get project name by ID."""
+        try:
+            project = await self.engine.find_one(
+                Project,
+                (Project.id == project_id) & (Project.is_deleted == False)
+            )
+            return project.projectName if project else ""
+        except Exception as e:
+            print(f"Error getting project name: {e}")
+            return ""
+
+    async def _populate_access_names(self, access_list: List[DirectorAccess]) -> List[DirectorAccess]:
+        """Populate service center names for director access list."""
+        for access in access_list:
+            if not access.service_center_name:
+                access.service_center_name = await self._get_service_center_name(access.service_center_id)
+        return access_list
+
+    async def _populate_project_access_names(self, access_list: List[ProjectAccess]) -> List[ProjectAccess]:
+        """Populate service center and project names for project access list."""
+        for access in access_list:
+            if not access.service_center_name:
+                access.service_center_name = await self._get_service_center_name(access.service_center_id)
+            if not access.project_name:
+                access.project_name = await self._get_project_name(access.project_id)
+        return access_list
 
     async def create_user(self, user_data: UserCreate) -> User:
         """Create a new user."""
@@ -149,7 +191,6 @@ class UserService:
     ) -> List[User]:
         """Get users by name substring."""
         if not name_substring:
-            # Return all users if no name provided
             users, _ = await self.get_users(limit=limit, is_deleted=is_deleted)
             return users
 
@@ -160,15 +201,15 @@ class UserService:
         )
         return users
 
-    # New methods for Project and ServiceCenter integration
     async def get_project_accesses_by_project(self, project_id: str, is_deleted: bool = False) -> List[ProjectAccess]:
         """Get all project accesses for a specific project."""
         try:
             project_object_id = ObjectId(project_id)
-            return await self.engine.find(
+            access_list = await self.engine.find(
                 ProjectAccess,
                 (ProjectAccess.project_id == project_object_id) & (ProjectAccess.is_deleted == is_deleted)
             )
+            return await self._populate_project_access_names(access_list)
         except Exception as e:
             print(f"Error getting project accesses by project: {e}")
             return []
@@ -177,10 +218,11 @@ class UserService:
         """Get all director accesses for a specific service center."""
         try:
             service_center_object_id = ObjectId(service_center_id)
-            return await self.engine.find(
+            access_list = await self.engine.find(
                 DirectorAccess,
                 (DirectorAccess.service_center_id == service_center_object_id) & (DirectorAccess.is_deleted == is_deleted)
             )
+            return await self._populate_access_names(access_list)
         except Exception as e:
             print(f"Error getting director accesses by service center: {e}")
             return []
@@ -189,10 +231,11 @@ class UserService:
         """Get all project accesses for a specific service center."""
         try:
             service_center_object_id = ObjectId(service_center_id)
-            return await self.engine.find(
+            access_list = await self.engine.find(
                 ProjectAccess,
                 (ProjectAccess.service_center_id == service_center_object_id) & (ProjectAccess.is_deleted == is_deleted)
             )
+            return await self._populate_project_access_names(access_list)
         except Exception as e:
             print(f"Error getting project accesses by service center: {e}")
             return []
@@ -225,7 +268,7 @@ class UserService:
             )
 
     async def _manage_director_accesses_with_id_logic(self, user: User, director_accesses: List[DirectorAccessBase]):
-        """Manage director accesses using ID-based logic: ID provided = update existing, no ID = create new."""
+        """Manage director accesses using ID-based logic with proper name population."""
         current_access_ids = []
 
         for access_data in director_accesses:
@@ -239,11 +282,11 @@ class UserService:
                     if existing_access:
                         # Mettre à jour l'accès existant
                         existing_access.service_center_id = ObjectId(access_data.serviceCenterId)
+                        existing_access.service_center_name = await self._get_service_center_name(existing_access.service_center_id)
                         existing_access.is_deleted = False  # Réactiver si nécessaire
                         await self.engine.save(existing_access)
                         current_access_ids.append(existing_access.id)
                     else:
-                        # ID fourni mais n'existe pas -> erreur
                         raise HTTPException(
                             status_code=status.HTTP_404_NOT_FOUND,
                             detail=f"Director access with ID {access_data.id} not found for this user"
@@ -257,10 +300,13 @@ class UserService:
                     )
             else:
                 # Pas d'ID -> créer un nouveau avec ID auto-généré
+                service_center_id = ObjectId(access_data.serviceCenterId)
+                service_center_name = await self._get_service_center_name(service_center_id)
+
                 new_access = DirectorAccess(
                     user_id=user.id,
-                    service_center_id=ObjectId(access_data.serviceCenterId),
-                    service_center_name=""  # Sera mis à jour par le service si nécessaire
+                    service_center_id=service_center_id,
+                    service_center_name=service_center_name
                 )
                 saved_access = await self.engine.save(new_access)
                 current_access_ids.append(saved_access.id)
@@ -280,7 +326,7 @@ class UserService:
         user.director_access_list = current_access_ids
 
     async def _manage_project_accesses_with_id_logic(self, user: User, project_accesses: List[ProjectAccessBase]):
-        """Manage project accesses using ID-based logic: ID provided = update existing, no ID = create new."""
+        """Manage project accesses using ID-based logic with proper name population."""
         current_access_ids = []
 
         for access_data in project_accesses:
@@ -297,11 +343,12 @@ class UserService:
                         existing_access.project_id = ObjectId(access_data.projectId)
                         existing_access.access_level = access_data.accessLevel
                         existing_access.occupancy_rate = access_data.occupancyRate
+                        existing_access.service_center_name = await self._get_service_center_name(existing_access.service_center_id)
+                        existing_access.project_name = await self._get_project_name(existing_access.project_id)
                         existing_access.is_deleted = False  # Réactiver si nécessaire
                         await self.engine.save(existing_access)
                         current_access_ids.append(existing_access.id)
                     else:
-                        # ID fourni mais n'existe pas -> erreur
                         raise HTTPException(
                             status_code=status.HTTP_404_NOT_FOUND,
                             detail=f"Project access with ID {access_data.id} not found for this user"
@@ -315,12 +362,17 @@ class UserService:
                     )
             else:
                 # Pas d'ID -> créer un nouveau avec ID auto-généré
+                service_center_id = ObjectId(access_data.serviceCenterId)
+                project_id = ObjectId(access_data.projectId)
+                service_center_name = await self._get_service_center_name(service_center_id)
+                project_name = await self._get_project_name(project_id)
+
                 new_access = ProjectAccess(
                     user_id=user.id,
-                    service_center_id=ObjectId(access_data.serviceCenterId),
-                    service_center_name="",  # Sera mis à jour par le service si nécessaire
-                    project_id=ObjectId(access_data.projectId),
-                    project_name="",  # Sera mis à jour par le service si nécessaire
+                    service_center_id=service_center_id,
+                    service_center_name=service_center_name,
+                    project_id=project_id,
+                    project_name=project_name,
                     access_level=access_data.accessLevel,
                     occupancy_rate=access_data.occupancyRate
                 )
@@ -341,14 +393,105 @@ class UserService:
         # Mettre à jour la liste de l'utilisateur
         user.project_access_list = current_access_ids
 
-    # Conserver les anciennes méthodes pour compatibilité
-    async def _manage_director_accesses_from_base(self, user: User, director_accesses: List[DirectorAccessBase]):
-        """Manage director accesses from DirectorAccessBase objects - DEPRECATED, use _manage_director_accesses_with_id_logic."""
-        return await self._manage_director_accesses_with_id_logic(user, director_accesses)
+    async def _manage_director_accesses(self, user: User, director_accesses: List[DirectorAccessCreate]):
+        """Manage director accesses for a user with proper name population."""
+        for access_data in director_accesses:
+            # Vérifier si l'accès existe déjà
+            existing_access = await self.engine.find_one(
+                DirectorAccess,
+                (DirectorAccess.user_id == user.id) &
+                (DirectorAccess.service_center_id == ObjectId(access_data.serviceCenterId)) &
+                (DirectorAccess.is_deleted == False)
+            )
 
-    async def _manage_project_accesses_from_base(self, user: User, project_accesses: List[ProjectAccessBase]):
-        """Manage project accesses from ProjectAccessBase objects - DEPRECATED, use _manage_project_accesses_with_id_logic."""
-        return await self._manage_project_accesses_with_id_logic(user, project_accesses)
+            if not existing_access:
+                # Créer un nouveau director access avec mapping CamelCase vers snake_case
+                director_access_dict = self._map_director_access_camelcase_to_snake(access_data)
+                director_access_dict['user_id'] = user.id  # Override avec l'ID correct
+                director_access_dict['service_center_name'] = await self._get_service_center_name(ObjectId(access_data.serviceCenterId))
+
+                director_access = DirectorAccess(**director_access_dict)
+                saved_access = await self.engine.save(director_access)
+
+                # Ajouter à la liste de l'utilisateur
+                if saved_access.id not in user.director_access_list:
+                    user.director_access_list.append(saved_access.id)
+            else:
+                # Mettre à jour l'accès existant si nécessaire
+                existing_access.service_center_name = await self._get_service_center_name(existing_access.service_center_id)
+                await self.engine.save(existing_access)
+
+    async def _manage_project_accesses(self, user: User, project_accesses: List[ProjectAccessCreate]):
+        """Manage project accesses for a user with proper name population."""
+        for access_data in project_accesses:
+            # Vérifier si l'accès existe déjà
+            existing_access = await self.engine.find_one(
+                ProjectAccess,
+                (ProjectAccess.user_id == user.id) &
+                (ProjectAccess.project_id == ObjectId(access_data.projectId)) &
+                (ProjectAccess.is_deleted == False)
+            )
+
+            if not existing_access:
+                # Créer un nouveau project access avec mapping CamelCase vers snake_case
+                project_access_dict = self._map_project_access_camelcase_to_snake(access_data)
+                project_access_dict['user_id'] = user.id  # Override avec l'ID correct
+                project_access_dict['service_center_name'] = await self._get_service_center_name(ObjectId(access_data.serviceCenterId))
+                project_access_dict['project_name'] = await self._get_project_name(ObjectId(access_data.projectId))
+
+                project_access = ProjectAccess(**project_access_dict)
+                saved_access = await self.engine.save(project_access)
+
+                # Ajouter à la liste de l'utilisateur
+                if saved_access.id not in user.project_access_list:
+                    user.project_access_list.append(saved_access.id)
+            else:
+                # Mettre à jour l'accès existant
+                existing_access.service_center_name = await self._get_service_center_name(existing_access.service_center_id)
+                existing_access.project_name = await self._get_project_name(existing_access.project_id)
+                existing_access.access_level = access_data.accessLevel
+                existing_access.occupancy_rate = access_data.occupancyRate
+                await self.engine.save(existing_access)
+
+    async def _remove_director_accesses(self, user: User, access_ids: List[str]):
+        """Remove director accesses for a user."""
+        for access_id in access_ids:
+            try:
+                object_id = ObjectId(access_id)
+                # Soft delete de l'accès
+                director_access = await self.engine.find_one(
+                    DirectorAccess,
+                    DirectorAccess.id == object_id
+                )
+                if director_access:
+                    director_access.is_deleted = True
+                    await self.engine.save(director_access)
+
+                    # Retirer de la liste de l'utilisateur
+                    if object_id in user.director_access_list:
+                        user.director_access_list.remove(object_id)
+            except Exception as e:
+                print(f"Error removing director access {access_id}: {e}")
+
+    async def _remove_project_accesses(self, user: User, access_ids: List[str]):
+        """Remove project accesses for a user."""
+        for access_id in access_ids:
+            try:
+                object_id = ObjectId(access_id)
+                # Soft delete de l'accès
+                project_access = await self.engine.find_one(
+                    ProjectAccess,
+                    ProjectAccess.id == object_id
+                )
+                if project_access:
+                    project_access.is_deleted = True
+                    await self.engine.save(project_access)
+
+                    # Retirer de la liste de l'utilisateur
+                    if object_id in user.project_access_list:
+                        user.project_access_list.remove(object_id)
+            except Exception as e:
+                print(f"Error removing project access {access_id}: {e}")
 
     async def update_user(self, user_id: str, user_update: UserUpdate) -> Optional[User]:
         """Update user with access management."""
@@ -387,101 +530,6 @@ class UserService:
                 detail=f"Error updating user: {str(e)}"
             )
 
-    async def _manage_director_accesses(self, user: User, director_accesses: List[DirectorAccessCreate]):
-        """Manage director accesses for a user."""
-        for access_data in director_accesses:
-            # Vérifier si l'accès existe déjà
-            existing_access = await self.engine.find_one(
-                DirectorAccess,
-                (DirectorAccess.user_id == user.id) &
-                (DirectorAccess.service_center_id == ObjectId(access_data.serviceCenterId)) &
-                (DirectorAccess.is_deleted == False)
-            )
-
-            if not existing_access:
-                # Créer un nouveau director access avec mapping CamelCase vers snake_case
-                director_access_dict = self._map_director_access_camelcase_to_snake(access_data)
-                director_access_dict['user_id'] = user.id  # Override avec l'ID correct
-                director_access = DirectorAccess(**director_access_dict)
-                saved_access = await self.engine.save(director_access)
-
-                # Ajouter à la liste de l'utilisateur
-                if saved_access.id not in user.director_access_list:
-                    user.director_access_list.append(saved_access.id)
-            else:
-                # Mettre à jour l'accès existant si nécessaire
-                existing_access.service_center_name = access_data.serviceCenterName
-                await self.engine.save(existing_access)
-
-    async def _remove_director_accesses(self, user: User, access_ids: List[str]):
-        """Remove director accesses for a user."""
-        for access_id in access_ids:
-            try:
-                object_id = ObjectId(access_id)
-                # Soft delete de l'accès
-                director_access = await self.engine.find_one(
-                    DirectorAccess,
-                    DirectorAccess.id == object_id
-                )
-                if director_access:
-                    director_access.is_deleted = True
-                    await self.engine.save(director_access)
-
-                    # Retirer de la liste de l'utilisateur
-                    if object_id in user.director_access_list:
-                        user.director_access_list.remove(object_id)
-            except Exception as e:
-                print(f"Error removing director access {access_id}: {e}")
-
-    async def _manage_project_accesses(self, user: User, project_accesses: List[ProjectAccessCreate]):
-        """Manage project accesses for a user."""
-        for access_data in project_accesses:
-            # Vérifier si l'accès existe déjà
-            existing_access = await self.engine.find_one(
-                ProjectAccess,
-                (ProjectAccess.user_id == user.id) &
-                (ProjectAccess.project_id == ObjectId(access_data.projectId)) &
-                (ProjectAccess.is_deleted == False)
-            )
-
-            if not existing_access:
-                # Créer un nouveau project access avec mapping CamelCase vers snake_case
-                project_access_dict = self._map_project_access_camelcase_to_snake(access_data)
-                project_access_dict['user_id'] = user.id  # Override avec l'ID correct
-                project_access = ProjectAccess(**project_access_dict)
-                saved_access = await self.engine.save(project_access)
-
-                # Ajouter à la liste de l'utilisateur
-                if saved_access.id not in user.project_access_list:
-                    user.project_access_list.append(saved_access.id)
-            else:
-                # Mettre à jour l'accès existant
-                existing_access.service_center_name = access_data.serviceCenterName
-                existing_access.project_name = access_data.projectName
-                existing_access.access_level = access_data.accessLevel
-                existing_access.occupancy_rate = access_data.occupancyRate
-                await self.engine.save(existing_access)
-
-    async def _remove_project_accesses(self, user: User, access_ids: List[str]):
-        """Remove project accesses for a user."""
-        for access_id in access_ids:
-            try:
-                object_id = ObjectId(access_id)
-                # Soft delete de l'accès
-                project_access = await self.engine.find_one(
-                    ProjectAccess,
-                    ProjectAccess.id == object_id
-                )
-                if project_access:
-                    project_access.is_deleted = True
-                    await self.engine.save(project_access)
-
-                    # Retirer de la liste de l'utilisateur
-                    if object_id in user.project_access_list:
-                        user.project_access_list.remove(object_id)
-            except Exception as e:
-                print(f"Error removing project access {access_id}: {e}")
-
     async def delete_user(self, user_id: str) -> bool:
         """Soft delete user."""
         user = await self.get_user_by_id(user_id)
@@ -496,51 +544,27 @@ class UserService:
         return True
 
     async def get_director_access_by_user(self, user_id: str, is_deleted: bool = False) -> List[DirectorAccess]:
-        """Get director access by user ID."""
+        """Get director access by user ID with populated names."""
         try:
             user_object_id = ObjectId(user_id)
-            return await self.engine.find(
+            access_list = await self.engine.find(
                 DirectorAccess,
                 (DirectorAccess.user_id == user_object_id) & (DirectorAccess.is_deleted == is_deleted)
             )
+            return await self._populate_access_names(access_list)
         except Exception as e:
             print(f"Error getting director access: {e}")
             return []
 
     async def get_project_access_by_user(self, user_id: str, is_deleted: bool = False) -> List[ProjectAccess]:
-        """Get project access by user ID."""
+        """Get project access by user ID with populated names."""
         try:
             user_object_id = ObjectId(user_id)
-            return await self.engine.find(
+            access_list = await self.engine.find(
                 ProjectAccess,
                 (ProjectAccess.user_id == user_object_id) & (ProjectAccess.is_deleted == is_deleted)
             )
+            return await self._populate_project_access_names(access_list)
         except Exception as e:
             print(f"Error getting project access: {e}")
             return []
-
-    async def _get_service_center_name(self, service_center_id: str) -> str:
-        """Get service center name by ID."""
-        try:
-            from app.models.service_center import ServiceCenter
-            service_center = await self.engine.find_one(
-                ServiceCenter,
-                (ServiceCenter.id == ObjectId(service_center_id)) & (ServiceCenter.is_deleted == False)
-            )
-            return service_center.centerName if service_center else ""
-        except Exception as e:
-            print(f"Error getting service center name: {e}")
-            return ""
-
-    async def _get_project_name(self, project_id: str) -> str:
-        """Get project name by ID."""
-        try:
-            from app.models.project import Project
-            project = await self.engine.find_one(
-                Project,
-                (Project.id == ObjectId(project_id)) & (Project.is_deleted == False)
-            )
-            return project.projectName if project else ""
-        except Exception as e:
-            print(f"Error getting project name: {e}")
-            return ""
