@@ -1,4 +1,4 @@
-"""Task service layer avec calculs automatiques intégrés - CORRIGÉ."""
+"""Task service layer avec calculs automatiques intégrés."""
 
 from typing import List, Optional
 from bson import ObjectId
@@ -73,7 +73,7 @@ class TaskService:
                 detail=f"Invalid RFT value '{rft_id}'. Valid values: {valid_rfts}"
             )
 
-    async def _calculate_and_update_fields(self, task: Task, initialize_time_remaining: bool = False) -> Task:
+    async def _calculate_and_update_fields(self, task: Task) -> Task:
         """Calcule et met à jour les champs automatiques de la tâche."""
         # Récupérer le projet pour obtenir le ratio
         project = await self.engine.find_one(Project, Project.id == task.projectId)
@@ -88,8 +88,8 @@ class TaskService:
         task.delta = metrics["delta"]
         task.progress = metrics["progress"]
 
-        # Initialiser timeRemaining seulement si explicitement demandé ou si c'est None
-        if initialize_time_remaining or task.timeRemaining is None:
+        # Initialiser timeRemaining si c'est la première fois ou si storyPoints a changé
+        if task.timeRemaining is None or task.timeRemaining == 0:
             task.timeRemaining = task.technicalLoad
 
         # Gestion automatique du Delivery Sprint
@@ -126,14 +126,14 @@ class TaskService:
             rft=TASKRFT.DEFAULT,
             technicalLoad=0,
             timeSpent=0,
-            timeRemaining=None,  # Will be initialized in _calculate_and_update_fields
+            timeRemaining=0,
             progress=0,
             assignee=assignees,
             delta=0
         )
 
-        # Calculer les champs automatiques et initialiser timeRemaining
-        task = await self._calculate_and_update_fields(task, initialize_time_remaining=True)
+        # Calculer les champs automatiques
+        task = await self._calculate_and_update_fields(task)
 
         try:
             await self.engine.save(task)
@@ -171,12 +171,8 @@ class TaskService:
 
         update_data = task_update.model_dump(exclude_unset=True)
 
-        # Sauvegarder les anciennes valeurs pour détecter les changements
+        # Sauvegarder l'ancienne valeur de storyPoints pour détecter les changements
         old_story_points = task.storyPoints
-        old_time_remaining = task.timeRemaining
-
-        # Déterminer si timeRemaining a été explicitement fourni dans l'update
-        time_remaining_explicitly_set = 'timeRemaining' in update_data
 
         # Convert string IDs to ObjectIds
         if 'sprintId' in update_data and update_data['sprintId'] is not None:
@@ -199,27 +195,16 @@ class TaskService:
             if field != 'id':
                 setattr(task, self._field_mapping[field], value)
 
-        # Réinitialiser timeRemaining seulement si :
-        # 1. storyPoints a changé ET timeRemaining n'a pas été explicitement fourni
-        # 2. OU si c'est la première fois qu'on met timeRemaining (était None)
-        should_reinitialize_time_remaining = False
-
+        # Réinitialiser timeRemaining si storyPoints a changé
         if 'storyPoints' in update_data and task.storyPoints != old_story_points:
-            if not time_remaining_explicitly_set:
-                # storyPoints a changé mais timeRemaining n'est pas explicitement fourni
-                # On réinitialise seulement si l'ancienne valeur était égale au technical load
-                project = await self.engine.find_one(Project, Project.id == task.projectId)
-                if project:
-                    old_technical_load = old_story_points / project.transversal_vs_technical_workload_ratio
-                    if old_time_remaining == old_technical_load:
-                        should_reinitialize_time_remaining = True
-
-        # Si timeRemaining était None et n'a pas été explicitement fourni, l'initialiser
-        if task.timeRemaining is None and not time_remaining_explicitly_set:
-            should_reinitialize_time_remaining = True
+            # On va recalculer le technical load et réinitialiser timeRemaining
+            project = await self.engine.find_one(Project, Project.id == task.projectId)
+            if project:
+                new_technical_load = task.storyPoints / project.transversal_vs_technical_workload_ratio
+                task.timeRemaining = new_technical_load
 
         # Calculer les champs automatiques
-        task = await self._calculate_and_update_fields(task, initialize_time_remaining=should_reinitialize_time_remaining)
+        task = await self._calculate_and_update_fields(task)
 
         try:
             await self.engine.save(task)
