@@ -4,28 +4,71 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Form, UploadFile
 from math import ceil
 
-from app.api.deps import get_task_service, get_sprint_service, get_cascade_deletion_service
-from app.schemas.task import TaskCreate, TaskUpdate, TaskResponse, HttpResponseTaskList, TaskSpecifics, \
-    TaskSpecificsResponse, HttpResponseTaskListResponse
 from app.schemas.general_schemas import HttpResponseDeleteStatus
 from app.services.task_service import TaskService
 from app.services.cascade_deletion_service import CascadeDeletionService
-from app.models.task import ImportCSVResponse, SourceType, EXPECTED_HEADERS, DB_FIELD_MAPPING
-from app.services.sprint_service import SprintService
-from app.utils.csv_import import validate_file_and_ids, parse_csv, validate_headers, \
+from app.models.task import ImportCSVResponse, SourceType, DB_FIELD_MAPPING
+from app.utils.csv_import import validate_file_and_ids, \
     map_csv_to_tasks, build_response, process_tasks_and_duplicates, analyse_csv
+from app.api.deps import get_task_service, get_sprint_service, get_cascade_deletion_service
+from app.schemas.task import (
+    TaskCreate, TaskUpdate, TaskResponse, HttpResponseTaskList, TaskSpecifics,
+    TaskSpecificsResponse, HttpResponseTaskListResponse, TaskResponseWithSprint, SprintInfoResponse, HttpResponseDeleteStatusWithSprint
+)
+from app.services.sprint_service import SprintService
+from app.utils.calculations import calculate_sprint_metrics
 
 router = APIRouter()
 
+async def build_sprint_info_response(
+    sprint_id: str,
+    sprint_service: SprintService,
+    task_service: TaskService
+) -> Optional[SprintInfoResponse]:
+    """Build sprint information response for task endpoints."""
+    try:
+        # Récupérer le sprint
+        sprint = await sprint_service.get_sprint_by_id(sprint_id)
+        if not sprint:
+            return None
+
+        # Récupérer les tâches et activités transversales du sprint
+        tasks = await task_service.get_tasks_by_sprint(sprint_id)
+        trans_acts = await sprint_service.get_sprint_transversal_activities_by_sprint(sprint_id)
+
+        # Calculer les métriques du sprint
+        metrics = await calculate_sprint_metrics(sprint, trans_acts, tasks)
+
+        return SprintInfoResponse(
+            name=sprint.sprintName,
+            capacity=sprint.capacity,
+            inScope=metrics["scoped"],
+            timeSpent=metrics["time_spent"],
+            velocity=metrics["velocity"],
+            progress=metrics["progress"],
+            otd=metrics["otd"],
+            oqd=metrics["oqd"]
+        )
+    except Exception as e:
+        print(f"Error building sprint info: {e}")
+        return None
 
 @router.post("/", response_model=TaskResponse, status_code=status.HTTP_201_CREATED, response_model_by_alias=False)
 async def create_task(
         taskData: TaskCreate,
-        task_service: TaskService = Depends(get_task_service)
-) -> TaskResponse:
+        task_service: TaskService = Depends(get_task_service),
+        sprint_service: SprintService = Depends(get_sprint_service)
+    ) -> TaskResponseWithSprint:
     """Create a new task."""
     task = await task_service.create_task(taskData)
-    return TaskResponse(
+
+    sprint_info = await build_sprint_info_response(
+        str(task.sprintId),
+        sprint_service,
+        task_service
+    )
+
+    return TaskResponseWithSprint(
         id=str(task.id),
         sprintId=str(task.sprintId),
         projectId=str(task.projectId),
@@ -44,7 +87,8 @@ async def create_task(
         timeRemaining=task.timeRemaining,
         progress=task.progress,
         assignee=[str(aid) for aid in task.assignee],
-        delta=task.delta
+        delta=task.delta,
+        sprintInfo = sprint_info
     )
 
 
@@ -98,12 +142,13 @@ async def get_tasks_by_ids(
     )
 
 
-@router.put("/update", response_model=TaskResponse, response_model_by_alias=False)
+@router.put("/update", response_model=TaskResponseWithSprint, response_model_by_alias=False)
 async def update_task(
         taskUpdate: TaskUpdate,
-        task_service: TaskService = Depends(get_task_service)
-) -> TaskResponse:
-    """Update task."""
+        task_service: TaskService = Depends(get_task_service),
+        sprint_service: SprintService = Depends(get_sprint_service)
+) -> TaskResponseWithSprint:
+    """Update task with sprint information."""
     task = await task_service.update_task(taskUpdate)
     if not task:
         raise HTTPException(
@@ -111,7 +156,14 @@ async def update_task(
             detail=f"Task {taskUpdate.id} not found"
         )
 
-    return TaskResponse(
+    # Récupérer les informations du sprint
+    sprint_info = await build_sprint_info_response(
+        str(task.sprintId),
+        sprint_service,
+        task_service
+    )
+
+    return TaskResponseWithSprint(
         id=str(task.id),
         sprintId=str(task.sprintId),
         projectId=str(task.projectId),
@@ -130,16 +182,30 @@ async def update_task(
         timeRemaining=task.timeRemaining,
         progress=task.progress,
         assignee=[str(aid) for aid in task.assignee],
-        delta=task.delta
+        delta=task.delta,
+        sprintInfo=sprint_info
     )
 
 
-@router.delete("/{taskId}", response_model=HttpResponseDeleteStatus, response_model_by_alias=False)
+@router.delete("/{taskId}", response_model=HttpResponseDeleteStatusWithSprint, response_model_by_alias=False)
 async def delete_task(
         taskId: str,
-        cascade_deletion_service: CascadeDeletionService = Depends(get_cascade_deletion_service)
+        cascade_deletion_service: CascadeDeletionService = Depends(get_cascade_deletion_service),
+        sprint_service: SprintService = Depends(get_sprint_service),
+        task_service: TaskService = Depends(get_task_service)
 ):
-    """Delete task (soft delete) - individuelle uniquement."""
+    """Delete task (soft delete) with sprint information."""
+
+    # Récupérer les informations de la tâche AVANT suppression
+    try:
+        task = await task_service.get_task_by_id(taskId)
+        sprint_id = str(task.sprintId) if task else None
+    except HTTPException:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Task not found"
+        )
+
     success = await cascade_deletion_service.delete_task(taskId, is_cascade=False)
     if not success:
         raise HTTPException(
@@ -147,9 +213,19 @@ async def delete_task(
             detail="Task not found"
         )
 
-    return HttpResponseDeleteStatus(
+    # Récupérer les informations du sprint APRÈS suppression
+    sprint_info = None
+    if sprint_id:
+        sprint_info = await build_sprint_info_response(
+            sprint_id,
+            sprint_service,
+            task_service
+        )
+
+    return HttpResponseDeleteStatusWithSprint(
         status=success,
-        msg=f"Task {taskId} deleted successfully." if success else f"Error during deletion of task {taskId}."
+        msg=f"Task {taskId} deleted successfully.",
+        sprintInfo=sprint_info
     )
 
 

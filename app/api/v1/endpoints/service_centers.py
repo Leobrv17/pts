@@ -19,6 +19,8 @@ from app.services.user_service import UserService
 from app.services.cascade_deletion_service import CascadeDeletionService
 from app.schemas.project import ProjectLightResponse
 from app.schemas.general_schemas import HttpResponseDeleteStatus
+from app.schemas.user import UserBase, UserServiceCenterResponse, UserProjectSummary
+from typing import List
 
 router = APIRouter()
 
@@ -59,6 +61,83 @@ async def build_users_list_for_service_center(center_id: str, user_service: User
     user_responses = []
     for user in users:
         user_response = await build_user_base_response(user)
+        user_responses.append(user_response)
+
+    return user_responses
+
+
+async def build_users_list_for_service_center_detailed(center_id: str, user_service: UserService) -> List[
+    UserServiceCenterResponse]:
+    """Build detailed users list for a service center with projects and occupancy aggregation."""
+    # Récupérer tous les utilisateurs qui ont des accès directeur ou projet sur ce centre
+    director_accesses = await user_service.get_director_accesses_by_service_center(center_id)
+    project_accesses = await user_service.get_project_accesses_by_service_center(center_id)
+
+    # Organiser les données par utilisateur
+    user_data = {}
+
+    # Traiter les accès directeur
+    for da in director_accesses:
+        user_id = str(da.user_id)
+        if user_id not in user_data:
+            user_data[user_id] = {
+                'is_director': True,
+                'projects': []
+            }
+        else:
+            user_data[user_id]['is_director'] = True
+
+    # Traiter les accès projet
+    for pa in project_accesses:
+        user_id = str(pa.user_id)
+        if user_id not in user_data:
+            user_data[user_id] = {
+                'is_director': False,
+                'projects': []
+            }
+
+        # Ajouter le projet à la liste
+        user_data[user_id]['projects'].append({
+            'id': str(pa.project_id),
+            'projectName': pa.project_name,
+            'accessLevel': pa.access_level,
+            'occupancyRate': pa.occupancy_rate
+        })
+
+    if not user_data:
+        return []
+
+    # Récupérer les utilisateurs complets
+    user_ids = list(user_data.keys())
+    users = await user_service.get_users_by_ids(user_ids)
+
+    # Construire les réponses détaillées
+    user_responses = []
+    for user in users:
+        user_id = str(user.id)
+        user_info = user_data.get(user_id, {'is_director': False, 'projects': []})
+
+        # Créer les objets UserProjectSummary
+        project_summaries = [
+            UserProjectSummary(
+                id=proj['id'],
+                projectName=proj['projectName'],
+                accessLevel=proj['accessLevel'],
+                occupancyRate=proj['occupancyRate']
+            )
+            for proj in user_info['projects']
+        ]
+
+        # Calculer l'occupancy total
+        total_occupancy = sum(proj['occupancyRate'] for proj in user_info['projects'])
+
+        user_response = UserServiceCenterResponse(
+            id=str(user.id),
+            firstName=user.first_name,
+            familyName=user.family_name,
+            projects=project_summaries,
+            totalOccupancyRate=total_occupancy
+        )
         user_responses.append(user_response)
 
     return user_responses
@@ -147,14 +226,13 @@ async def get_service_centers_light(
         pages=ceil(total / size) if total > 0 else 0
     )
 
-
 @router.get("/{serviceCenterId}", response_model=ServiceCenterResponse, response_model_by_alias=False)
 async def get_service_center(
-    serviceCenterId: str,
-    isDeleted: bool = False,
-    service_center_service: ServiceCenterService = Depends(get_service_center_service),
-    project_service: ProjectService = Depends(get_project_service),
-    user_service: UserService = Depends(get_user_service)
+        serviceCenterId: str,
+        isDeleted: bool = False,
+        service_center_service: ServiceCenterService = Depends(get_service_center_service),
+        project_service: ProjectService = Depends(get_project_service),
+        user_service: UserService = Depends(get_user_service)
 ) -> ServiceCenterResponse:
     """Get service center by ID."""
     service_center = await service_center_service.get_service_center_by_id(serviceCenterId, isDeleted)
@@ -164,8 +242,8 @@ async def get_service_center(
             detail="Service center not found"
         )
 
-    # Récupérer les utilisateurs associés à ce centre
-    users = await build_users_list_for_service_center(serviceCenterId, user_service)
+    # Récupérer les utilisateurs avec leurs projets et occupancy détaillés
+    users = await build_users_list_for_service_center_detailed(serviceCenterId, user_service)
 
     projects, _ = await project_service.get_projects(center_id=str(service_center.id), is_deleted=isDeleted)
     projects_light = []
@@ -180,16 +258,16 @@ async def get_service_center(
             )
         )
 
-    return ServiceCenterResponse (
-            id=str(service_center.id),
-            centerName=service_center.centerName,
-            location=service_center.location,
-            contactEmail=service_center.contactEmail,
-            contactPhone=service_center.contactPhone,
-            status=service_center.status,
-            projects=projects_light,
-            users=users
-        )
+    return ServiceCenterResponse(
+        id=str(service_center.id),
+        centerName=service_center.centerName,
+        location=service_center.location,
+        contactEmail=service_center.contactEmail,
+        contactPhone=service_center.contactPhone,
+        status=service_center.status,
+        projects=projects_light,
+        users=users
+    )
 
 
 @router.put("/update", response_model=ServiceCenterResponse, response_model_by_alias=False)

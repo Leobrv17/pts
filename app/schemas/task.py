@@ -118,3 +118,43 @@ class TaskImportResponse(BaseModel):
     duplicateKeys: List[str]
     skippedRows: int
     skippedRowNumbers: List[int] = []
+
+class SprintInfoResponse(BaseModel):
+    """Schema for sprint information in task responses."""
+    name: str = Field(..., description="Sprint name")
+    capacity: float = Field(..., description="Sprint capacity in man*days")
+    inScope: float = Field(..., description="Sum of story points in sprint (scoped)")
+    timeSpent: float = Field(..., description="Total time spent in sprint")
+    velocity: float = Field(..., description="Sum of story points of completed tasks")
+    progress: float = Field(..., description="Average progress of tasks in sprint")
+    otd: float = Field(..., description="On Time Delivery percentage")
+    oqd: float = Field(..., description="On Quality Delivery percentage")
+
+    class Config:
+        from_attributes = True
+        populate_by_name = True
+        json_encoders = {
+            ObjectId: str,
+            datetime: lambda v: v.isoformat()
+        }
+
+
+class TaskResponseWithSprint(TaskBase):
+    """Schema for task response with sprint information."""
+    id: str = Field(..., description="Task ID")
+    sprintInfo: Optional[SprintInfoResponse] = Field(None, description="Sprint information")
+
+    class Config:
+        from_attributes = True
+        populate_by_name = True
+        json_encoders = {
+            ObjectId: str,
+            datetime: lambda v: v.isoformat()
+        }
+
+
+class HttpResponseDeleteStatusWithSprint(BaseModel):
+    """Schema for deletion status with sprint information."""
+    status: bool
+    msg: str
+    sprintInfo: Optional[SprintInfoResponse] = None

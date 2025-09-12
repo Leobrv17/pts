@@ -159,3 +159,35 @@ class UserByNameRequest(BaseModel):
 class UserByNameResponse(BaseModel):
     """Schema for user search by name response."""
     users: List[UserResponse]
+
+class UserProjectSummary(BaseModel):
+    """Schema pour résumer un projet d'un utilisateur."""
+    id: str = Field(..., description="Project ID")
+    projectName: str = Field(..., description="Project name")
+    accessLevel: AccessLevelEnum = Field(..., description="Access level")
+    occupancyRate: float = Field(..., ge=0.0, le=100.0, description="Occupancy rate percentage")
+
+    class Config:
+        from_attributes = True
+        populate_by_name = True
+        json_encoders = {
+            ObjectId: str,
+            datetime: lambda v: v.isoformat()
+        }
+
+
+class UserServiceCenterResponse(BaseModel):
+    """Schema pour un utilisateur dans le contexte d'un service center."""
+    id: str = Field(..., description="User ID")
+    firstName: str = Field(..., description="First name")
+    familyName: str = Field(..., description="Family name")
+    projects: List[UserProjectSummary] = Field(default_factory=list, description="List of projects in this service center")
+    totalOccupancyRate: float = Field(default=0.0, ge=0.0, description="Sum of occupancy rates across all projects")
+
+    class Config:
+        from_attributes = True
+        populate_by_name = True
+        json_encoders = {
+            ObjectId: str,
+            datetime: lambda v: v.isoformat()
+        }

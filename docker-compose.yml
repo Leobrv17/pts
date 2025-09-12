@@ -9,21 +9,6 @@ services:
     networks:
       - app-network
 
-  python-app:
-    build: ./app1
-    container_name: pastis_api
-    environment:
-      - MONGO_URI=${MONGO_URI}
-      - DB_NAME=${DB_NAME}
-      - RETRIES=${RETRIES}
-      - SERVER_PORT=${SERVER_PORT}
-      - POPULATE_DB=${POPULATE_DB}
-    depends_on:
-      - mongo
-    ports:
-      - "8003:8003"
-    networks:
-      - app-network
 
   mongo-express:
     image: mongo-express
