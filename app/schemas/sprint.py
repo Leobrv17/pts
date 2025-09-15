@@ -7,6 +7,7 @@ from bson import ObjectId
 
 from app.models.sprint import SprintStatus
 from app.schemas.task import TaskResponse
+from app.schemas.user import UserResponse  # Ajout de l'import
 
 
 class SprintBase(BaseModel):
@@ -68,6 +69,7 @@ class SprintResponse(SprintBase):
     """Schema for sprint response."""
     id: str = Field(..., description="Sprint ID")
     tasks: List[TaskResponse] = Field(..., default_factory=list, description="Tasks currently in sprint")
+    users: List[UserResponse] = Field(default_factory=list, description="Users working on the project")  # Ajout des utilisateurs
     duration: Optional[float] = Field(default=None, ge=0, description="Sprint duration in workdays")
     scoped: float = Field(..., description="Sum of story points of tasks in sprint")
     velocity: float = Field(..., description="Sum of story points of completed tasks in sprint")

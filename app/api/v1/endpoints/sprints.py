@@ -3,7 +3,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from math import ceil
 
-from app.api.deps import get_sprint_service, get_task_service, get_project_service, get_cascade_deletion_service
+from app.api.deps import get_sprint_service, get_task_service, get_project_service, get_cascade_deletion_service, get_user_service
 from app.schemas.sprint import (
     SprintCreate, SprintUpdate, SprintResponse, SprintListResponse,
     SprintTransversalActivityUpdate, SprintTransversalActivityResponse,
@@ -11,6 +11,7 @@ from app.schemas.sprint import (
 )
 from app.services.sprint_service import SprintService
 from app.services.task_service import TaskService
+from app.services.user_service import UserService
 from app.services.cascade_deletion_service import CascadeDeletionService
 from app.utils.calculations import calculate_sprint_metrics
 from app.schemas.task import TaskResponse
@@ -69,11 +70,71 @@ async def build_task_response(sprint_id: str, task_service: TaskService) -> List
     return task_response
 
 
+async def build_users_response_for_sprint(project_id: str, user_service: UserService):
+    """Build users list for a sprint based on the project users."""
+    from app.schemas.user import UserResponse
+
+    # Récupérer tous les utilisateurs qui ont accès à ce projet
+    project_accesses = await user_service.get_project_accesses_by_project(project_id)
+    user_ids = [str(pa.user_id) for pa in project_accesses]
+
+    if not user_ids:
+        return []
+
+    # Récupérer les utilisateurs complets
+    users = await user_service.get_users_by_ids(user_ids)
+
+    # Construire les réponses complètes
+    user_responses = []
+    for user in users:
+        # Get director access list
+        director_accesses = await user_service.get_director_access_by_user(str(user.id))
+        director_access_responses = [
+            {
+                "id": str(da.id),
+                "serviceCenterId": str(da.service_center_id),
+                "serviceCenterName": da.service_center_name
+            }
+            for da in director_accesses
+        ]
+
+        # Get project access list
+        project_accesses_user = await user_service.get_project_access_by_user(str(user.id))
+        project_access_responses = [
+            {
+                "id": str(pa.id),
+                "serviceCenterId": str(pa.service_center_id),
+                "serviceCenterName": pa.service_center_name,
+                "projectId": str(pa.project_id),
+                "projectName": pa.project_name,
+                "accessLevel": pa.access_level,
+                "occupancyRate": pa.occupancy_rate
+            }
+            for pa in project_accesses_user
+        ]
+
+        user_response = UserResponse(
+            id=str(user.id),
+            firstName=user.first_name,
+            familyName=user.family_name,
+            email=user.email,
+            type=user.type,
+            registrationNumber=user.registration_number,
+            trigram=user.trigram,
+            directorAccessList=director_access_responses,
+            projectAccessList=project_access_responses
+        )
+        user_responses.append(user_response)
+
+    return user_responses
+
+
 @router.post("/", response_model=SprintResponse, status_code=status.HTTP_201_CREATED, response_model_by_alias=False)
 async def create_sprint(
     sprintData: SprintCreate,
     sprint_service: SprintService = Depends(get_sprint_service),
-    project_service: ProjectService = Depends(get_project_service)
+    project_service: ProjectService = Depends(get_project_service),
+    user_service: UserService = Depends(get_user_service)
 ) -> SprintResponse:
     """Create a new sprint."""
     sprint = await sprint_service.create_sprint(sprintData)
@@ -98,6 +159,9 @@ async def create_sprint(
     relevant_sprint_response = await sprint_service.get_relevant_sprints_by_project(str(sprint.projectId))
     sprint_metrics = await calculate_sprint_metrics(sprint, s_tas, [])
 
+    # Récupérer les utilisateurs du projet
+    users_response = await build_users_response_for_sprint(sprintData.projectId, user_service)
+
     return SprintResponse(
         id=str(sprint.id),
         projectId=str(sprint.projectId),
@@ -114,6 +178,7 @@ async def create_sprint(
         otd=sprint_metrics["otd"],
         oqd=sprint_metrics["oqd"],
         tasks=[],
+        users=users_response,
         sprintTargets=relevant_sprint_response,
         transversalActivities=ta_response
     )
@@ -129,7 +194,8 @@ async def get_sprints(
     isDeleted: Optional[bool] = Query(False, description="Filter by deleted sprint"),
     sprint_service: SprintService = Depends(get_sprint_service),
     task_service: TaskService = Depends(get_task_service),
-    project_service: ProjectService = Depends(get_project_service)
+    project_service: ProjectService = Depends(get_project_service),
+    user_service: UserService = Depends(get_user_service)
 ) -> SprintListResponse:
     """Get sprints with pagination and filters."""
     skip = (page - 1) * size
@@ -152,6 +218,9 @@ async def get_sprints(
         trans_acts_response = await build_trans_act_response(str(sprint.id), sprint_service)
         relevant_sprint_response = await sprint_service.get_relevant_sprints_by_project(str(sprint.projectId))
 
+        # Récupérer les utilisateurs du projet
+        users_response = await build_users_response_for_sprint(str(sprint.projectId), user_service)
+
         task_statuses = []
         task_types = []
         try:
@@ -172,6 +241,7 @@ async def get_sprints(
             dueDate=sprint.dueDate,
             duration=sprint_metrics["duration"],
             tasks=task_response,
+            users=users_response,
             scoped=sprint_metrics["scoped"],
             velocity=sprint_metrics["velocity"],
             progress=sprint_metrics["progress"],
@@ -232,7 +302,8 @@ async def get_sprints_light(
 async def update_sprint(
     sprintUpdate: SprintUpdate,
     sprint_service: SprintService = Depends(get_sprint_service),
-    task_service: TaskService = Depends(get_task_service)
+    task_service: TaskService = Depends(get_task_service),
+    user_service: UserService = Depends(get_user_service)
 ) -> SprintResponse:
     """Update sprint."""
     sprint = await sprint_service.update_sprint(sprintUpdate)
@@ -276,6 +347,9 @@ async def update_sprint(
     task_response = await build_task_response(str(sprint.id), task_service)
     relevant_sprint_response = await sprint_service.get_relevant_sprints_by_project(str(sprint.projectId))
 
+    # Récupérer les utilisateurs du projet
+    users_response = await build_users_response_for_sprint(str(sprint.projectId), user_service)
+
     return SprintResponse(
         id=str(sprint.id),
         projectId=str(sprint.projectId),
@@ -292,6 +366,7 @@ async def update_sprint(
         otd=sprint_metrics["otd"],
         oqd=sprint_metrics["oqd"],
         tasks=task_response,
+        users=users_response,
         sprintTargets=relevant_sprint_response,
         transversalActivities=trans_acts_response
     )
