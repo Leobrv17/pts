@@ -68,6 +68,7 @@ class SprintUpdate(BaseModel):
 class SprintResponse(SprintBase):
     """Schema for sprint response."""
     id: str = Field(..., description="Sprint ID")
+    projectName: Optional[str] = Field(None, min_length=1, max_length=200)
     tasks: List[TaskResponse] = Field(..., default_factory=list, description="Tasks currently in sprint")
     users: List[UserResponse] = Field(default_factory=list, description="Users working on the project")  # Ajout des utilisateurs
     duration: Optional[float] = Field(default=None, ge=0, description="Sprint duration in workdays")

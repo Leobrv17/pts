@@ -139,9 +139,9 @@ class SprintInfoResponse(BaseModel):
         }
 
 
-class TaskResponseWithSprint(TaskBase):
+class TaskResponseWithSprint(BaseModel):
     """Schema for task response with sprint information."""
-    id: str = Field(..., description="Task ID")
+    task : TaskResponse
     sprintInfo: Optional[SprintInfoResponse] = Field(None, description="Sprint information")
 
     class Config:

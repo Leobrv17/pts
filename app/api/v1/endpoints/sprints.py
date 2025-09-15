@@ -234,6 +234,7 @@ async def get_sprints(
         sprint_responses.append(SprintResponse(
             id=str(sprint.id),
             projectId=str(sprint.projectId),
+            projectName=project.projectName,
             capacity=sprint.capacity,
             sprintName=sprint.sprintName,
             status=sprint.status,

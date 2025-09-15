@@ -145,9 +145,9 @@ async def create_project(
 ) -> ProjectResponse:
     """Create a new project."""
     task_statuses = await task_service.get_task_status_list()
-    task_statuses = [sid for sid, sv in task_statuses.items()]
+    task_statuses = ["TODO","PROG","REV","STANDBY","DONE","POST"]
     task_types = await task_service.get_task_type_list()
-    task_types = [tid for tid, tv in task_types.items()]
+    task_types = ["BUG","TASK"]
     project_full_data = ProjectBase(
         centerId=projectData.centerId,
         projectName=projectData.projectName,

@@ -13,7 +13,8 @@ from app.utils.csv_import import validate_file_and_ids, \
 from app.api.deps import get_task_service, get_sprint_service, get_cascade_deletion_service
 from app.schemas.task import (
     TaskCreate, TaskUpdate, TaskResponse, HttpResponseTaskList, TaskSpecifics,
-    TaskSpecificsResponse, HttpResponseTaskListResponse, TaskResponseWithSprint, SprintInfoResponse, HttpResponseDeleteStatusWithSprint
+    TaskSpecificsResponse, HttpResponseTaskListResponse, TaskResponseWithSprint, SprintInfoResponse,
+    HttpResponseDeleteStatusWithSprint, TaskBase
 )
 from app.services.sprint_service import SprintService
 from app.utils.calculations import calculate_sprint_metrics
@@ -53,7 +54,7 @@ async def build_sprint_info_response(
         print(f"Error building sprint info: {e}")
         return None
 
-@router.post("/", response_model=TaskResponse, status_code=status.HTTP_201_CREATED, response_model_by_alias=False)
+@router.post("/", response_model=TaskResponseWithSprint, status_code=status.HTTP_201_CREATED, response_model_by_alias=False)
 async def create_task(
         taskData: TaskCreate,
         task_service: TaskService = Depends(get_task_service),
@@ -62,13 +63,7 @@ async def create_task(
     """Create a new task."""
     task = await task_service.create_task(taskData)
 
-    sprint_info = await build_sprint_info_response(
-        str(task.sprintId),
-        sprint_service,
-        task_service
-    )
-
-    return TaskResponseWithSprint(
+    task_info = TaskResponse(
         id=str(task.id),
         sprintId=str(task.sprintId),
         projectId=str(task.projectId),
@@ -88,7 +83,17 @@ async def create_task(
         progress=task.progress,
         assignee=[str(aid) for aid in task.assignee],
         delta=task.delta,
-        sprintInfo = sprint_info
+    )
+
+    sprint_info = await build_sprint_info_response(
+        str(task.sprintId),
+        sprint_service,
+        task_service
+    )
+
+    return TaskResponseWithSprint(
+        task=task_info,
+        sprintInfo=sprint_info
     )
 
 
@@ -156,14 +161,7 @@ async def update_task(
             detail=f"Task {taskUpdate.id} not found"
         )
 
-    # Récupérer les informations du sprint
-    sprint_info = await build_sprint_info_response(
-        str(task.sprintId),
-        sprint_service,
-        task_service
-    )
-
-    return TaskResponseWithSprint(
+    task_info = TaskResponse(
         id=str(task.id),
         sprintId=str(task.sprintId),
         projectId=str(task.projectId),
@@ -183,6 +181,17 @@ async def update_task(
         progress=task.progress,
         assignee=[str(aid) for aid in task.assignee],
         delta=task.delta,
+    )
+
+    # Récupérer les informations du sprint
+    sprint_info = await build_sprint_info_response(
+        str(task.sprintId),
+        sprint_service,
+        task_service
+    )
+
+    return TaskResponseWithSprint(
+        task=task_info,
         sprintInfo=sprint_info
     )
 
