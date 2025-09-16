@@ -1,4 +1,4 @@
-"""Task API endpoints with cascade deletion."""
+"""Task API endpoints avec deliveryStatus modifié."""
 
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Form, UploadFile
@@ -41,6 +41,8 @@ async def build_sprint_info_response(
         metrics = await calculate_sprint_metrics(sprint, trans_acts, tasks)
 
         return SprintInfoResponse(
+            id=sprint_id,
+            projectId=str(sprint.projectId),
             name=sprint.sprintName,
             capacity=sprint.capacity,
             inScope=metrics["scoped"],
@@ -72,11 +74,11 @@ async def create_task(
         storyPoints=task.storyPoints,
         wu=task.wu,
         comment=task.comment,
-        deliverySprint=task.deliverySprint,
+        deliveryStatus=task.deliveryStatus.value,  # Convertir enum en string
         deliveryVersion=task.deliveryVersion,
-        type=task.type,
-        status=task.status,
-        rft=task.rft,
+        type=task.type.value,
+        status=task.status.value,
+        rft=task.rft.value,
         technicalLoad=task.technicalLoad,
         timeSpent=task.timeSpent,
         timeRemaining=task.timeRemaining,
@@ -120,11 +122,11 @@ async def get_tasks_by_ids(
                 storyPoints=task.storyPoints,
                 wu=task.wu,
                 comment=task.comment,
-                deliverySprint=task.deliverySprint,
+                deliveryStatus=task.deliveryStatus.value,  # Convertir enum en string
                 deliveryVersion=task.deliveryVersion,
-                type=task.type,
-                status=task.status,
-                rft=task.rft,
+                type=task.type.value,
+                status=task.status.value,
+                rft=task.rft.value,
                 technicalLoad=task.technicalLoad,
                 timeSpent=task.timeSpent,
                 timeRemaining=task.timeRemaining,
@@ -170,11 +172,11 @@ async def update_task(
         storyPoints=task.storyPoints,
         wu=task.wu,
         comment=task.comment,
-        deliverySprint=task.deliverySprint,
+        deliveryStatus=task.deliveryStatus.value,  # Convertir enum en string
         deliveryVersion=task.deliveryVersion,
-        type=task.type,
-        status=task.status,
-        rft=task.rft,
+        type=task.type.value,
+        status=task.status.value,
+        rft=task.rft.value,
         technicalLoad=task.technicalLoad,
         timeSpent=task.timeSpent,
         timeRemaining=task.timeRemaining,
@@ -242,9 +244,7 @@ async def delete_task(
 async def get_task_types(
         task_service: TaskService = Depends(get_task_service)
 ) -> TaskSpecificsResponse:
-    """Get all existing task types and respective keys.
-    For now only creates predefined list of types.
-    Task Types should eventually be Database objects."""
+    """Get all existing task types and respective keys."""
     dummy_types = await task_service.get_task_type_list()
 
     type_list = [
@@ -261,9 +261,7 @@ async def get_task_types(
 async def get_task_statuses(
         task_service: TaskService = Depends(get_task_service)
 ) -> TaskSpecificsResponse:
-    """Get all existing task statuses and respective keys.
-     For now only creates predefined list of statuses.
-     Task Statuses should eventually be Database objects."""
+    """Get all existing task statuses and respective keys."""
     dummy_statuses = await task_service.get_task_status_list()
 
     status_list = [
@@ -276,6 +274,23 @@ async def get_task_statuses(
     return TaskSpecificsResponse(specifics=status_list)
 
 
+@router.get("/delivery-statuses/", response_model=TaskSpecificsResponse, response_model_by_alias=False)
+async def get_delivery_statuses(
+        task_service: TaskService = Depends(get_task_service)
+) -> TaskSpecificsResponse:
+    """Get all existing delivery statuses and respective keys."""
+    delivery_statuses = await task_service.get_delivery_status_list()
+
+    status_list = [
+        TaskSpecifics(
+            key=key,
+            specific=delivery_statuses[key]
+        )
+        for key in delivery_statuses
+    ]
+    return TaskSpecificsResponse(specifics=status_list)
+
+
 @router.post("/import-csv", response_model=ImportCSVResponse, response_model_by_alias=False)
 async def import_csv(
     projectId: str,
@@ -284,25 +299,7 @@ async def import_csv(
     task_service: TaskService = Depends(get_task_service),
     sprint_service: SprintService = Depends(get_sprint_service)
 ) -> ImportCSVResponse:
-    """Import tasks from a CSV file into a sprint within a project.
-
-    Args:
-
-        projectId (str): The ID of the project to import tasks into.
-        sprintId (str): The ID of the sprint to import tasks into.
-        file (UploadFile): The CSV file containing task data.
-        source (SourceType): The source type of the CSV (e.g., JIRA or GITLAB).
-        task_service (TaskService): The task service.
-        sprint_service (SprintService): The sprint service.
-
-    Returns:
-
-        ImportCSVResponse: A response object detailing the import results, including counts and messages.
-
-    Raises:
-
-        HTTPException: If validation, parsing, or processing fails at any step.
-    """
+    """Import tasks from a CSV file into a sprint within a project."""
     sprintId, projectId = validate_file_and_ids(file, sprintId, projectId)
     sprint = await sprint_service.get_sprint_by_id(sprintId)
     content = await file.read()

@@ -57,7 +57,6 @@ async def build_task_response(sprint_id: str, task_service: TaskService) -> List
             status=task.status,
             progress=task.progress,
             comment=task.comment,
-            deliverySprint=task.deliverySprint,
             deliveryVersion=task.deliveryVersion,
             rft=task.rft,
             assignee=assignees,

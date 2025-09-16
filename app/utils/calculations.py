@@ -1,6 +1,5 @@
 """
-Correction des fonctions de calcul pour maintenir la compatibilité avec le code existant.
-Ce fichier remplace app/utils/calculations.py
+Correction des fonctions de calcul avec deliveryStatus modifié.
 """
 import asyncio
 from datetime import datetime, timedelta, timezone
@@ -8,7 +7,7 @@ from typing import Dict, List
 from math import floor
 
 from app.models.sprint import Sprint, SprintStatus, SprintTransversalActivity
-from app.models.task import TaskStatus, TASKRFT, Task
+from app.models.task import TaskStatus, TASKRFT, Task, TaskDeliveryStatus
 
 
 async def calculate_sprint_metrics(sprint: Sprint, trans_acts: List[SprintTransversalActivity],
@@ -40,9 +39,9 @@ async def calculate_sprint_metrics(sprint: Sprint, trans_acts: List[SprintTransv
         calculate_transversal_time_in_days(trans_acts),
         calculate_story_points(tasks),
         calculate_progress_in_story_points(tasks),
-        calculate_velocity(tasks, sprint.sprintName),
+        calculate_velocity(tasks),  # Remplace sprint_name par aucun paramètre
         calculate_total_time_in_days(tasks),
-        calculate_rft_percentage(sprint.sprintName, sprint.status, tasks),
+        calculate_rft_percentage(sprint.status, tasks),  # Remplace sprint_name
         calculate_average_progress(tasks)
     )
 
@@ -137,9 +136,9 @@ async def calculate_transversal_time_in_days(activities: List[SprintTransversalA
     return total_transversal_time
 
 
-async def calculate_rft_percentage(sprint_name: str, status: SprintStatus, tasks: List[Task]) -> float:
+async def calculate_rft_percentage(status: SprintStatus, tasks: List[Task]) -> float:
     """
-    Calcule le RFT (%) = nombre de RFT OK / nombre de Tasks avec Delivery Sprint = current sprint.
+    Calcule le RFT (%) = nombre de RFT OK / nombre de Tasks avec Delivery Status = OK.
     Seulement calculé quand le Sprint est Done.
     """
     if status != SprintStatus.DONE or not tasks:
@@ -149,7 +148,7 @@ async def calculate_rft_percentage(sprint_name: str, status: SprintStatus, tasks
     nb_task_delivered = 0.0
 
     for task in tasks:
-        if task.status == TaskStatus.DONE and is_delivery_sprint_current(task, sprint_name):
+        if task.status == TaskStatus.DONE and task.deliveryStatus == TaskDeliveryStatus.OK:
             nb_task_delivered += 1
             if task.rft == TASKRFT.OK:
                 nb_rft_ok += 1
@@ -206,7 +205,7 @@ async def calculate_story_points(tasks: List[Task]) -> float:
     return total_story_points
 
 
-async def calculate_velocity(tasks: List[Task], sprint_name: str) -> float:
+async def calculate_velocity(tasks: List[Task]) -> float:
     """
     Calcule la vélocité = somme des SPs dont le statut est "Done".
     """
@@ -219,13 +218,6 @@ async def calculate_velocity(tasks: List[Task], sprint_name: str) -> float:
             velocity += task.storyPoints
 
     return velocity
-
-
-def is_delivery_sprint_current(task: Task, sprint_name: str) -> bool:
-    """
-    Vérifie si le delivery sprint de la tâche correspond au sprint actuel.
-    """
-    return task.deliverySprint == sprint_name
 
 
 def calculate_weekdays(start_date: datetime, due_date: datetime) -> int:
@@ -283,7 +275,7 @@ async def calculate_otd(status: SprintStatus, velocity: float, in_scope: float) 
 
 async def calculate_oqd(sprint_name: str, status: SprintStatus, tasks: List[Task]) -> float:
     """Alias pour la compatibilité - calcule le RFT."""
-    return await calculate_rft_percentage(sprint_name, status, tasks)
+    return await calculate_rft_percentage(status, tasks)
 
 
 def date_convertion(start_date: datetime, due_date: datetime) -> tuple:

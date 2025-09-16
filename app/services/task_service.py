@@ -1,11 +1,11 @@
-"""Task service layer avec calculs automatiques intégrés - CORRIGÉ."""
+"""Task service layer avec deliveryStatus modifié."""
 
 from typing import List, Optional
 from bson import ObjectId
 from odmantic import AIOEngine
 from fastapi import HTTPException, status
 
-from app.models.task import Task, TASKRFT, TaskStatus, TaskType
+from app.models.task import Task, TASKRFT, TaskStatus, TaskType, TaskDeliveryStatus
 from app.models.project import Project
 from app.models.sprint import Sprint
 from app.schemas.task import TaskCreate, TaskUpdate
@@ -24,7 +24,7 @@ class TaskService:
         'storyPoints': 'storyPoints',
         'wu': 'wu',
         'comment': 'comment',
-        'deliverySprint': 'deliverySprint',
+        'deliveryStatus': 'deliveryStatus',  # Remplace deliverySprint
         'deliveryVersion': 'deliveryVersion',
         'type': 'type',
         'status': 'status',
@@ -73,6 +73,17 @@ class TaskService:
                 detail=f"Invalid RFT value '{rft_id}'. Valid values: {valid_rfts}"
             )
 
+    def _validate_and_convert_delivery_status(self, delivery_status_id: str) -> TaskDeliveryStatus:
+        """Validate and convert delivery status ID to TaskDeliveryStatus enum."""
+        try:
+            return TaskDeliveryStatus(delivery_status_id)
+        except ValueError:
+            valid_delivery_statuses = [ds.value for ds in TaskDeliveryStatus]
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid delivery status '{delivery_status_id}'. Valid values: {valid_delivery_statuses}"
+            )
+
     async def _calculate_and_update_fields(self, task: Task, initialize_time_remaining: bool = False) -> Task:
         """Calcule et met à jour les champs automatiques de la tâche."""
         # Récupérer le projet pour obtenir le ratio
@@ -92,11 +103,10 @@ class TaskService:
         if initialize_time_remaining or task.timeRemaining is None:
             task.timeRemaining = task.technicalLoad
 
-        # Gestion automatique du Delivery Sprint
-        if task.status == TaskStatus.DONE and not task.deliverySprint:
-            sprint = await self.engine.find_one(Sprint, Sprint.id == task.sprintId)
-            if sprint:
-                task.deliverySprint = sprint.sprintName
+        # Gestion automatique du Delivery Status selon le statut de la tâche
+        if task.status == TaskStatus.DONE and task.deliveryStatus == TaskDeliveryStatus.DEFAULT:
+            # Si la tâche est terminée et pas de statut de livraison défini, on le met à OK par défaut
+            task.deliveryStatus = TaskDeliveryStatus.OK
 
         return task
 
@@ -119,7 +129,7 @@ class TaskService:
             storyPoints=task_data.storyPoints if task_data.storyPoints else 0,
             wu="",
             comment="",
-            deliverySprint="",
+            deliveryStatus=TaskDeliveryStatus.DEFAULT,  # Remplace deliverySprint
             deliveryVersion="",
             type=task_type,
             status=task_status,
@@ -193,6 +203,8 @@ class TaskService:
             update_data['type'] = self._validate_and_convert_type(update_data['type'])
         if 'rft' in update_data and update_data['rft'] is not None:
             update_data['rft'] = self._validate_and_convert_rft(update_data['rft'])
+        if 'deliveryStatus' in update_data and update_data['deliveryStatus'] is not None:
+            update_data['deliveryStatus'] = self._validate_and_convert_delivery_status(update_data['deliveryStatus'])
 
         # Mettre à jour les champs
         for field, value in update_data.items():
@@ -277,4 +289,12 @@ class TaskService:
             "DONE": "Done",
             "CANCEL": "Cancelled",
             "POST": "Postponed"
+        }
+
+    async def get_delivery_status_list(self) -> dict:
+        """Get all existing delivery statuses with their IDs."""
+        return {
+            "": "Not set",
+            "OK": "Delivered successfully",
+            "KO": "Delivery issue"
         }

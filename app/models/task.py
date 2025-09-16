@@ -37,6 +37,13 @@ class TASKRFT(str, Enum):
     KO = "KO"
 
 
+class TaskDeliveryStatus(str, Enum):
+    """Enum pour le statut de livraison de la tâche."""
+    DEFAULT = ""  # Null/vide
+    OK = "OK"     # Livrée avec succès
+    KO = "KO"     # Problème de livraison
+
+
 # Enum for source selection (for CSV import)
 class SourceType(str, Enum):
     JIRA = "jira"
@@ -73,7 +80,7 @@ class Task(Model):
         storyPoints (float): The estimated effort required for the task.
         wu (str): Work units associated with the task.
         comment (str): Additional comments related to the task.
-        deliverySprint (str): The sprint associated with the delivery of the task.
+        deliveryStatus (TaskDeliveryStatus): The delivery status of the task (OK/KO/Default).
         deliveryVersion (str): The version associated with the delivery of the task.
         type (TaskType): The type of task, stores the enum ID (BUG, TASK, etc.).
         status (TaskStatus): The current status of the task, stores the enum ID (OPEN, TODO, etc.).
@@ -97,7 +104,7 @@ class Task(Model):
     storyPoints: float = Field(default=0.0)
     wu: str = Field(default="")
     comment: str = Field(default="")
-    deliverySprint: Optional[str] = Field(default="")
+    deliveryStatus: TaskDeliveryStatus = Field(default=TaskDeliveryStatus.DEFAULT)  # Remplace deliverySprint
     deliveryVersion: Optional[str] = Field(default="")
     type: TaskType = Field(default=TaskType.TASK)  # Stores "TASK", "BUG", etc.
     status: TaskStatus = Field(default=TaskStatus.TODO)  # Stores "TODO", "PROG", etc.
@@ -134,7 +141,7 @@ class TaskMandatoryFields(Model):
         status (TaskStatus): The current status of the task, stores the enum ID.
         progress (str): The progress of the task.
         comment (str): Additional comments related to the task.
-        deliverySprint (str): The sprint associated with the delivery of the task.
+        deliveryStatus (TaskDeliveryStatus): The delivery status of the task.
         deliveryVersion (str): The version associated with the delivery of the task.
         type (TaskType): The type of task, stores the enum ID.
         rft (TASKRFT): Readiness for task completion.
@@ -153,7 +160,7 @@ class TaskMandatoryFields(Model):
     status: TaskStatus  # Stores enum ID
     progress: Optional[float]
     comment: Optional[str]
-    deliverySprint: Optional[str]
+    deliveryStatus: TaskDeliveryStatus  # Remplace deliverySprint
     deliveryVersion: Optional[str]
     type: TaskType  # Stores enum ID
     rft: TASKRFT

@@ -1,4 +1,4 @@
-"""Task schemas for API requests and responses."""
+"""Task schemas avec deliveryStatus modifié."""
 
 from datetime import datetime
 from typing import Optional, List
@@ -18,7 +18,7 @@ class TaskBase(BaseModel):
     status: str = Field(default="TODO", description="Task status ID (OPEN, TODO, PROG, etc.)")
     progress: Optional[float] = Field(default=None, ge=0, le=100, description="Progress percentage")
     comment: str = Field(default="", description="Comments")
-    deliverySprint: Optional[str] = Field(default="", description="Delivery sprint")
+    deliveryStatus: str = Field(default="", description="Delivery status (OK, KO, or empty)")  # Remplace deliverySprint
     deliveryVersion: Optional[str] = Field(default="", description="Delivery version")
     rft: str = Field(default="", description="Ready for test (OK, KO, or empty)")
     assignee: Optional[List[str]] = Field(default_factory=list, description="Assignee user IDs")
@@ -51,7 +51,7 @@ class TaskUpdate(BaseModel):
     storyPoints: Optional[float] = Field(None, ge=0)
     wu: Optional[str] = None
     comment: Optional[str] = None
-    deliverySprint: Optional[str] = None
+    deliveryStatus: Optional[str] = Field(None, description="Delivery status (OK, KO, or empty)")  # Remplace deliverySprint
     deliveryVersion: Optional[str] = None
     type: Optional[str] = Field(None, description="Task type ID")
     status: Optional[str] = Field(None, description="Task status ID")
@@ -119,8 +119,11 @@ class TaskImportResponse(BaseModel):
     skippedRows: int
     skippedRowNumbers: List[int] = []
 
+
 class SprintInfoResponse(BaseModel):
     """Schema for sprint information in task responses."""
+    id: str = Field(..., description="Sprint ID")
+    projectId: str = Field(..., description="Sprint parent Project ID")
     name: str = Field(..., description="Sprint name")
     capacity: float = Field(..., description="Sprint capacity in man*days")
     inScope: float = Field(..., description="Sum of story points in sprint (scoped)")
