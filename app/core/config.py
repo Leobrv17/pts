@@ -10,7 +10,7 @@ class Settings(BaseSettings):
 
     API_V1_STR: str = ""
     PROJECT_NAME: str = "Project Management API"
-    VERSION: str = "0.5.0"
+    VERSION: str = "0.5.5"
     DESCRIPTION: str = "API for managing projects, sprints, tasks, users and service centers"
 
     # Database

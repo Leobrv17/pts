@@ -13,11 +13,14 @@ from app.utils.csv_import import validate_file_and_ids, \
 from app.api.deps import get_task_service, get_sprint_service, get_cascade_deletion_service
 from app.schemas.task import (
     TaskCreate, TaskUpdate, TaskResponse, HttpResponseTaskList, TaskSpecifics,
-    TaskSpecificsResponse, HttpResponseTaskListResponse, TaskResponseWithSprint, SprintInfoResponse,
-    HttpResponseDeleteStatusWithSprint, TaskBase
+    TaskSpecificsResponse, HttpResponseTaskListResponse, TaskBase
 )
 from app.services.sprint_service import SprintService
 from app.utils.calculations import calculate_sprint_metrics
+from datetime import datetime
+from pydantic import BaseModel, Field
+from bson import ObjectId
+from app.schemas.sprint import SprintLight
 
 router = APIRouter()
 
@@ -25,7 +28,7 @@ async def build_sprint_info_response(
     sprint_id: str,
     sprint_service: SprintService,
     task_service: TaskService
-) -> Optional[SprintInfoResponse]:
+) -> Optional[SprintLight]:
     """Build sprint information response for task endpoints."""
     try:
         # Récupérer le sprint
@@ -40,12 +43,15 @@ async def build_sprint_info_response(
         # Calculer les métriques du sprint
         metrics = await calculate_sprint_metrics(sprint, trans_acts, tasks)
 
-        return SprintInfoResponse(
-            id=sprint_id,
+        return SprintLight(
+            _id=sprint_id,
             projectId=str(sprint.projectId),
-            name=sprint.sprintName,
+            sprintName=sprint.sprintName,
             capacity=sprint.capacity,
-            inScope=metrics["scoped"],
+            startDate=str(sprint.startDate),
+            status=sprint.status,
+            dueDate=str(sprint.dueDate),
+            scoped=metrics["scoped"],
             timeSpent=metrics["time_spent"],
             velocity=metrics["velocity"],
             progress=metrics["progress"],
@@ -55,6 +61,28 @@ async def build_sprint_info_response(
     except Exception as e:
         print(f"Error building sprint info: {e}")
         return None
+
+class TaskResponseWithSprint(BaseModel):
+    """Schema for task response with sprint information."""
+    task : TaskResponse
+    sprintInfo: Optional[SprintLight] = Field(None, description="Sprint information")
+
+    class Config:
+        from_attributes = True
+        populate_by_name = True
+        json_encoders = {
+            ObjectId: str,
+            datetime: lambda v: v.isoformat()
+        }
+
+class HttpResponseDeleteAndMsg(BaseModel):
+    status: bool
+    msg: str
+
+class HttpResponseDeleteStatusWithSprint(BaseModel):
+    """Schema for deletion status with sprint information."""
+    status: HttpResponseDeleteAndMsg
+    sprintInfo: Optional[SprintLight] = None
 
 @router.post("/", response_model=TaskResponseWithSprint, status_code=status.HTTP_201_CREATED, response_model_by_alias=False)
 async def create_task(
@@ -233,9 +261,13 @@ async def delete_task(
             task_service
         )
 
-    return HttpResponseDeleteStatusWithSprint(
+    statusResponse = HttpResponseDeleteAndMsg(
         status=success,
         msg=f"Task {taskId} deleted successfully.",
+    )
+
+    return HttpResponseDeleteStatusWithSprint(
+        status=statusResponse,
         sprintInfo=sprint_info
     )
 
