@@ -7,7 +7,8 @@ from bson import ObjectId
 
 from app.models.sprint import SprintStatus
 from app.schemas.task import TaskResponse
-from app.schemas.user import UserResponse  # Ajout de l'import
+from app.schemas.user import UserResponse
+from app.schemas.user import UserInfo
 
 
 class SprintBase(BaseModel):
@@ -134,6 +135,7 @@ class SprintLightResponse(SprintBase):
     timeSpent: float = Field(..., description="Sum of time spent in tasks in Sprint")
     otd: float = Field(..., description="Ratio of weighted completed tasks over total task lengths in Sprint")
     oqd: float = Field(..., description="Number of tasks done properly over number of tasks done in Sprint")
+    users: List[UserInfo] = Field(default_factory=list, description="Users working on the project")
 
     class Config:
         from_attributes = True

@@ -18,6 +18,7 @@ from app.schemas.task import TaskResponse
 from app.services.project_service import ProjectService
 from app.models.sprint import SprintTransversalActivity
 from app.schemas.general_schemas import HttpResponseDeleteStatus
+from app.schemas.user import UserInfo
 
 router = APIRouter()
 
@@ -126,6 +127,32 @@ async def build_users_response_for_sprint(project_id: str, user_service: UserSer
         user_responses.append(user_response)
 
     return user_responses
+
+
+async def build_user_info_response_for_sprint(project_id: str, user_service: UserService) -> List[UserInfo]:
+    """Build minimal user info list for a sprint based on project users."""
+    from app.schemas.user import UserInfo
+
+    # Récupérer tous les utilisateurs qui ont accès à ce projet
+    project_accesses = await user_service.get_project_accesses_by_project(project_id)
+    user_ids = [str(pa.user_id) for pa in project_accesses]
+
+    if not user_ids:
+        return []
+
+    # Récupérer les utilisateurs complets
+    users = await user_service.get_users_by_ids(user_ids)
+
+    # Construire les réponses UserInfo minimales
+    user_info_responses = []
+    for user in users:
+        user_info_responses.append(UserInfo(
+            id=str(user.id),
+            firstName=user.first_name,
+            familyName=user.family_name
+        ))
+
+    return user_info_responses
 
 
 @router.post("/", response_model=SprintResponse, status_code=status.HTTP_201_CREATED, response_model_by_alias=False)
@@ -267,10 +294,14 @@ async def get_sprints_light(
         project_id: str,
         isDeleted: bool = False,
         sprint_service: SprintService = Depends(get_sprint_service),
-        task_service: TaskService = Depends(get_task_service)
+        task_service: TaskService = Depends(get_task_service),
+        user_service: UserService = Depends(get_user_service)  # Ajouter ce paramètre
 ) -> SprintListResponseLight:
     """Get service centers in light format (only ID and name) with pagination."""
     sprints, _ = await sprint_service.get_sprints(project_id=project_id, is_deleted=isDeleted)
+
+    # Récupérer les utilisateurs une seule fois pour le projet
+    users_response = await build_user_info_response_for_sprint(project_id, user_service)
 
     sprint_responses = []
     for sprint in sprints:
@@ -291,7 +322,8 @@ async def get_sprints_light(
                 progress=sprint_metrics["progress"],
                 timeSpent=sprint_metrics["time_spent"],
                 otd=sprint_metrics["otd"],
-                oqd=sprint_metrics["oqd"]
+                oqd=sprint_metrics["oqd"],
+                users=users_response  # Ajouter cette ligne
             )
         )
 

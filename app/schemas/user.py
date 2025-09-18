@@ -191,3 +191,17 @@ class UserServiceCenterResponse(BaseModel):
             ObjectId: str,
             datetime: lambda v: v.isoformat()
         }
+
+class UserInfo(BaseModel):
+    """Schema minimal pour les informations utilisateur dans les sprints."""
+    id: str = Field(..., description="User ID")
+    firstName: str = Field(..., description="First name")
+    familyName: str = Field(..., description="Family name")
+
+    class Config:
+        from_attributes = True
+        populate_by_name = True
+        json_encoders = {
+            ObjectId: str,
+            datetime: lambda v: v.isoformat()
+        }

@@ -21,6 +21,7 @@ from app.schemas.sprint import SprintLightResponse
 from app.schemas.general_schemas import HttpResponseDeleteStatus
 from app.utils.calculations import calculate_sprint_metrics
 from app.models.project import ProjectTransversalActivity
+from app.api.v1.endpoints.sprints import build_user_info_response_for_sprint
 
 router = APIRouter()
 
@@ -185,7 +186,8 @@ async def get_projects_light(
         isDeleted: Optional[bool] = Query(False, description="Filter by deleted projects"),
         project_service: ProjectService = Depends(get_project_service),
         sprint_service: SprintService = Depends(get_sprint_service),
-        task_service: TaskService = Depends(get_task_service)
+        task_service: TaskService = Depends(get_task_service),
+        user_service: UserService = Depends(get_user_service)
 ) -> ProjectListResponseLight:
     """Get service centers in light format (only ID and name) with pagination."""
     skip = (page - 1) * size
@@ -203,7 +205,8 @@ async def get_projects_light(
             project_id=str(project.id),
             sprint_service=sprint_service,
             task_service=task_service,
-            isDeleted=isDeleted
+            isDeleted=isDeleted,
+            user_service = user_service
         )
 
         project_light_responses.append(
