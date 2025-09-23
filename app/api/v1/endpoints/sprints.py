@@ -113,16 +113,10 @@ async def build_users_response_for_sprint(project_id: str, user_service: UserSer
             for pa in project_accesses_user
         ]
 
-        user_response = UserResponse(
+        user_response = UserInfo(
             id=str(user.id),
             firstName=user.first_name,
-            familyName=user.family_name,
-            email=user.email,
-            type=user.type,
-            registrationNumber=user.registration_number,
-            trigram=user.trigram,
-            directorAccessList=director_access_responses,
-            projectAccessList=project_access_responses
+            familyName=user.family_name
         )
         user_responses.append(user_response)
 
