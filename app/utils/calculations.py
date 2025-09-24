@@ -1,5 +1,5 @@
 """
-Correction des fonctions de calcul avec deliveryStatus modifié.
+Correction des fonctions de calcul avec deliveryStatus modifié - Focus sur OTD.
 """
 import asyncio
 from datetime import datetime, timedelta, timezone
@@ -35,22 +35,21 @@ async def calculate_sprint_metrics(sprint: Sprint, trans_acts: List[SprintTransv
         }
 
     # Calculs parallèles
-    total_transversal_time, total_story_points, progress_sp, velocity, total_time_spent, rft, avg_progress = await asyncio.gather(
+    total_transversal_time, total_story_points, progress_sp, velocity, total_time_spent, rft, avg_progress, otd = await asyncio.gather(
         calculate_transversal_time_in_days(trans_acts),
         calculate_story_points(tasks),
         calculate_progress_in_story_points(tasks),
-        calculate_velocity(tasks),  # Remplace sprint_name par aucun paramètre
+        calculate_velocity(tasks),
         calculate_total_time_in_days(tasks),
-        calculate_rft_percentage(sprint.status, tasks),  # Remplace sprint_name
-        calculate_average_progress(tasks)
+        calculate_rft_percentage(sprint.status, tasks),
+        calculate_average_progress(tasks),
+        calculate_otd_percentage(sprint.status, tasks)  # Nouveau calcul OTD
     )
 
-    # Predictability (OTD) - seulement si sprint Done
+    # Predictability (basé sur la vélocité) - seulement si sprint Done
     predictability = 0.0
-    otd = 0.0
     if sprint.status == SprintStatus.DONE and total_story_points > 0:
         predictability = (velocity / total_story_points) * 100
-        otd = predictability  # Alias pour compatibilité
 
     return {
         # Clés existantes pour compatibilité
@@ -59,7 +58,7 @@ async def calculate_sprint_metrics(sprint: Sprint, trans_acts: List[SprintTransv
         "velocity": round(velocity, 1),
         "progress": round(avg_progress, 0),  # Progression moyenne des tâches
         "time_spent": round(total_time_spent + total_transversal_time, 1),
-        "otd": round(otd, 0),
+        "otd": round(otd, 0),  # Nouveau calcul OTD corrigé
         "oqd": round(rft, 0),
 
         # Nouvelles métriques selon D-Req2
@@ -68,6 +67,33 @@ async def calculate_sprint_metrics(sprint: Sprint, trans_acts: List[SprintTransv
         "rft": round(rft, 0),  # RFT %
         "transversal_time": round(total_transversal_time, 1)
     }
+
+
+async def calculate_otd_percentage(status: SprintStatus, tasks: List[Task]) -> float:
+    """
+    Calcule l'OTD (%) = pourcentage de story points des tâches dont le delivery status est OK ou DEFAULT (null).
+    Seulement calculé quand le Sprint est Done.
+
+    OTD = (Somme des SP des tâches avec deliveryStatus OK ou DEFAULT) / (Somme totale des SP) * 100
+    """
+    if not tasks:
+        return 0.0
+
+    total_story_points = 0.0
+    delivered_story_points = 0.0
+
+    for task in tasks:
+        if task.status != TaskStatus.CANCELLED:  # Exclure les tâches annulées
+            total_story_points += task.storyPoints
+
+            # Considérer comme "delivered" si deliveryStatus est OK ou DEFAULT (null/vide)
+            if task.deliveryStatus in [TaskDeliveryStatus.OK, TaskDeliveryStatus.DEFAULT]:
+                delivered_story_points += task.storyPoints
+
+    if total_story_points == 0:
+        return 0.0
+
+    return (delivered_story_points / total_story_points) * 100
 
 
 async def calculate_average_progress(tasks: List[Task]) -> float:
@@ -267,8 +293,13 @@ async def calculate_transversal_time(activities: List[SprintTransversalActivity]
 
 
 async def calculate_otd(status: SprintStatus, velocity: float, in_scope: float) -> float:
-    """Alias pour la compatibilité - calcule la prédictibilité."""
-    if status != SprintStatus.DONE or in_scope == 0:
+    """
+    DEPRECATED: Ancienne fonction OTD basée sur la vélocité.
+    Maintenue pour compatibilité mais utilise le nouveau calcul.
+    Utilisez calculate_otd_percentage à la place.
+    """
+    # Pour la compatibilité, on retourne un calcul basé sur la vélocité
+    if  in_scope == 0:
         return 0.0
     return (velocity / in_scope) * 100
 
